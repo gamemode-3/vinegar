@@ -3,7 +3,7 @@ def next_element():
         icon: "back.svg"
         on_click: page_back
 
-    ~ this is a comment
+    # this is a comment
     options_button = Button:
         icon: "options.svg"
         on_click: open_options
@@ -29,11 +29,3 @@ list = next_element(), until finished
 
 scroll_area = ScrollArea:
     content: list
-
-# alternative (a more optimised version for when new elements should be added as you scroll)
-
-scroll_area = GenScrollArea:
-    generator_next: next_element
-    until: finished
-    element_height: get_element_height()
-    element_count: get_element_count()

@@ -1,0 +1,40 @@
+hello = 2
+function:
+    a: #20302
+    b: bin_10010
+    c: 3242.23
+    d: file.txt
+
+
+tokens:
+    word hello
+    equal_sign
+    number 2
+    newline
+    word function
+    colon
+    newline
+    indent 1
+    word a 
+    colon
+    hashtag
+    number 20302
+    newline
+    indent 1
+    word b
+    colon
+    word bin_10010
+    newline
+    indent 1
+    word c
+    colon 
+    number 3242
+    period
+    number 23
+    newline
+    indent 1
+    word d
+    colon 
+    word file
+    period
+    word txt
