@@ -3,11 +3,10 @@
 version = 3
 
 [[package]]
-name = "lines"
-version = "0.1.0"
-dependencies = [
- "thiserror",
-]
+name = "lazy_static"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "proc-macro2"
@@ -63,3 +62,11 @@ name = "unicode-ident"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "301abaae475aa91687eb82514b328ab47a211a533026cb25fc3e519b86adfc3c"
+
+[[package]]
+name = "vinegar"
+version = "0.1.0"
+dependencies = [
+ "lazy_static",
+ "thiserror",
+]
