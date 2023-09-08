@@ -1,11 +1,11 @@
 extern crate lazy_static;
-use crate::interpreter::error_handling::{InterpreterError};
+use super::debug::FileInterpreterError;
+use super::{debug::DebugInfo, debug::InterpreterError};
+use crate::{debug, file_handler};
 use lazy_static::lazy_static;
-use std::collections::HashMap;
+use std::char;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-
-
-use super::error_handling::debug_char_repr;
 
 lazy_static! {
     static ref SPACE_CHARS: HashMap<char, usize> = {
@@ -16,157 +16,262 @@ lazy_static! {
     };
 }
 
-#[derive(Debug)]
-pub struct TokenWord {
-    word: String,
-    char_range: Range<usize>,
+lazy_static! {
+    static ref WORD_CHARS: HashSet<char> = {
+        let mut set = HashSet::new();
+        set.insert('_');
+        set
+    };
 }
 
 #[derive(Debug)]
-pub struct TokenSpace {
-    pub size: usize,
-    pub char_range: Range<usize>,
+pub struct TokenWord {
+    pub word: String,
+}
+
+#[derive(Debug)]
+pub struct TokenNewLine {
+    pub indent: usize,
 }
 
 #[derive(Debug)]
 pub struct TokenExplicitString {
     pub string: String,
-    pub char_range: Range<usize>,
 }
 
 #[derive(Debug)]
-pub struct TokenSingleChar {
-    pub char: char,
-    pub char_range: Range<usize>,
+pub struct TokenChar {
+    pub character: char,
 }
 
 #[derive(Debug)]
 pub enum Token {
     Word(TokenWord),
-    Space(TokenSpace),
-    NewLine(TokenSingleChar),
+    NewLine(TokenNewLine),
     ExplicitString(TokenExplicitString),
-    Colon(TokenSingleChar),
-    Equals(TokenSingleChar),
-    Comma(TokenSingleChar),
-    Plus(TokenSingleChar),
-    Minus(TokenSingleChar),
-    Star(TokenSingleChar),
-    Slash(TokenSingleChar),
+    ParenOpen(TokenChar),
+    ParenClose(TokenChar),
+    Colon(TokenChar),
+    Equals(TokenChar),
+    Comma(TokenChar),
+    Plus(TokenChar),
+    Minus(TokenChar),
+    Star(TokenChar),
+    Slash(TokenChar),
+    Pipe(TokenChar),
+    Hashtag(TokenChar),
+}
+
+#[derive(Debug)]
+pub struct DebugToken {
+    pub token: Token,
+    pub char_range: Range<usize>,
+}
+
+trait VinegarChar {
+    fn is_word_char(&self) -> bool;
+}
+
+impl VinegarChar for char {
+    fn is_word_char(&self) -> bool {
+        self.is_alphanumeric() || WORD_CHARS.contains(self)
+    }
 }
 
 pub struct Lexer {
+    debug_info: DebugInfo,
     string: Vec<char>,
     pointer: usize,
 }
 
 impl Lexer {
-    pub fn lex(string: String) -> Result<Vec<Token>, InterpreterError> {
+    pub fn lex_string(
+        string: String,
+        debug_info: Option<DebugInfo>,
+    ) -> Result<Vec<DebugToken>, InterpreterError> {
         let mut instance = Self {
+            debug_info: match debug_info {
+                Some(d) => d,
+                None => DebugInfo::new("(unknown source)".to_string()),
+            },
             string: string.chars().collect(),
             pointer: 0,
         };
         instance.get_tokens()
     }
 
-    fn get_tokens(&mut self) -> Result<Vec<Token>, InterpreterError> {
-        let mut all_tokens = Vec::new();
-        self.next();
-        while let Some(&current) = self.prev() {
-            match self.next_token(current) {
-                Ok(value) => all_tokens.push(value),
-                Err(err) => return Err(err),
+    pub fn lex_file(path: String) -> Result<Vec<DebugToken>, FileInterpreterError> {
+        let file_content = match file_handler::get_file_contents(&path) {
+            Ok(contents) => contents,
+            Err(err) => return Err(FileInterpreterError::IOError(err)),
+        };
+        let mut instance = Self {
+            debug_info: DebugInfo::new(format!("\"{}\"", path)),
+            string: file_content.chars().collect(),
+            pointer: 0,
+        };
+        match instance.get_tokens() {
+            Ok(tokens) => Ok(tokens),
+            Err(err) => Err(FileInterpreterError::InterpreterError(err)),
+        }
+    }
+
+    fn get_tokens(&mut self) -> Result<Vec<DebugToken>, InterpreterError> {
+        let mut all_tokens: Vec<DebugToken> = Vec::new();
+        all_tokens.push(self.next_newline(self.pointer)?);
+        if self.pointer > 0 {
+            self.pointer -= 1
+        }
+
+        while let Some(&current) = self.peek() {
+            if current == ' ' {
+                self.next();
+                continue;
             }
+            all_tokens.push(self.next_token(current)?);
         }
 
         Ok(all_tokens)
     }
 
-    fn next_token(&mut self, first: char) -> Result<Token, InterpreterError> {
+    fn next_token(&mut self, first: char) -> Result<DebugToken, InterpreterError> {
         let start_pointer = self.pointer;
 
-        if first.is_alphanumeric() {
-            let mut word = String::new();
-            word.push(first);
-
-            while let Some(&character) = self.next() {
-                if !character.is_alphanumeric() {
-                    break;
-                }
-                word.push(character);
-            }
-            return Ok(Token::Word(TokenWord {
-                word: word,
-                char_range: start_pointer..self.pointer,
-            }));
-        } else if SPACE_CHARS.contains_key(&first) {
-            self.next();
-            return Ok(Token::Space(TokenSpace {
-                size: SPACE_CHARS
-                    .get(&first)
-                    .map(|&x| x)
-                    .expect("key magically vanished"),
-                char_range: start_pointer..self.pointer,
-            }));
+        if first.is_word_char() {
+            self.next_word(start_pointer)
+        } else if first == '\n' {
+            self.next_newline(start_pointer)
         } else if first == '"' || first == '\'' {
-            let quote_type = first;
-
-            let mut string = String::new();
-
-            let mut next = None;
-            let mut escaping_quotes = false;
-            while let Some(&character) = self.next() {
-                if character == quote_type {
-                    if !escaping_quotes {
-                        next = Some(character);
-                        break;
-                    }
-                    escaping_quotes = false;
-                }
-                if character == '\\' {
-                    escaping_quotes = !escaping_quotes;
-                }
-                string.push(character);
-            }
-
-            return match next {
-                Some(_) => {
-                    self.next();
-                    Ok(Token::ExplicitString(TokenExplicitString {
-                        string: string,
-                        char_range: start_pointer..self.pointer,
-                    }))
-                }
-                None => Err(InterpreterError::UnexpectedEOFError(
-                    self.get_error_prefix(),
-                    format!(" expected '{}'", debug_char_repr(quote_type),),
-                )),
-            };
+            self.next_explicit_string(first, start_pointer)
         } else {
-            self.next();
-            let token = TokenSingleChar {
-                char: first,
-                char_range: start_pointer..self.pointer,
-            };
-            return match first {
-                '\n' => Ok(Token::NewLine(token)),
-                '=' => Ok(Token::Equals(token)),
-                ':' => Ok(Token::Colon(token)),
-                ',' => Ok(Token::Comma(token)),
-                '+' => Ok(Token::Plus(token)),
-                '-' => Ok(Token::Minus(token)),
-                '*' => Ok(Token::Star(token)),
-                '/' => Ok(Token::Slash(token)),
-                _ => Err(InterpreterError::InvalidCharacterError(
-                    self.get_error_prefix(),
-                    debug_char_repr(first),
-                )),
-            };
+            self.next_single_char(first, start_pointer)
         }
     }
 
-    fn prev(&self) -> Option<&char> {
-        self.string.get(self.pointer - 1)
+    fn next_word(
+        &mut self,
+        start_pointer: usize,
+    ) -> Result<DebugToken, InterpreterError> {
+        let mut word = String::new();
+
+        while let Some(&character) = self.next() {
+            if !character.is_word_char() {
+                break;
+            }
+            word.push(character);
+        }
+        return Ok(DebugToken {
+            token: Token::Word(TokenWord { word: word }),
+            char_range: start_pointer..self.pointer,
+        });
+    }
+
+    fn next_newline(&mut self, start_pointer: usize) -> Result<DebugToken, InterpreterError> {
+        let mut indent = 0;
+        let mut current = match self.next() {
+            Some(c) => c,
+            None => {
+                return Ok(DebugToken {
+                    token: Token::NewLine(TokenNewLine { indent: 0 }),
+                    char_range: start_pointer..self.pointer,
+                });
+            }
+        };
+        loop {
+            indent += match SPACE_CHARS.get(&current) {
+                Some(i) => i,
+                None => break,
+            };
+            if let Some(next_char) = self.next() {
+                current = next_char;
+            } else {
+                break;
+            }
+        }
+
+        return Ok(DebugToken {
+            token: Token::NewLine(TokenNewLine { indent }),
+            char_range: start_pointer..self.pointer,
+        });
+    }
+
+    fn next_explicit_string(
+        &mut self,
+        first: char,
+        start_pointer: usize,
+    ) -> Result<DebugToken, InterpreterError> {
+        self.next();
+        
+        let quote_type = first;
+
+        let mut string = String::new();
+
+        let mut next = None;
+        let mut escaping_quotes = false;
+        while let Some(&character) = self.next() {
+            if character == quote_type {
+                if !escaping_quotes {
+                    next = Some(character);
+                    break;
+                }
+                escaping_quotes = false;
+            }
+            if character == '\\' {
+                escaping_quotes = !escaping_quotes;
+            }
+            string.push(character);
+        }
+
+        return match next {
+            Some(_) => {
+                self.next();
+                Ok(DebugToken {
+                    token: Token::ExplicitString(TokenExplicitString { string: string }),
+                    char_range: start_pointer..self.pointer,
+                })
+            }
+            None => Err(InterpreterError::UnexpectedEndOfFileError(
+                self.get_error_prefix(),
+                format!("expected '{}'.", debug::char_repr(quote_type),),
+            )),
+        };
+    }
+
+    fn next_single_char(
+        &mut self,
+        first: char,
+        start_pointer: usize,
+    ) -> Result<DebugToken, InterpreterError> {
+        self.next();
+        let char_token = TokenChar { character: first };
+        let token = match first {
+            '(' => Some(Token::ParenOpen(char_token)),
+            ')' => Some(Token::ParenClose(char_token)),
+            '=' => Some(Token::Equals(char_token)),
+            ':' => Some(Token::Colon(char_token)),
+            ',' => Some(Token::Comma(char_token)),
+            '+' => Some(Token::Plus(char_token)),
+            '-' => Some(Token::Minus(char_token)),
+            '*' => Some(Token::Star(char_token)),
+            '/' => Some(Token::Slash(char_token)),
+            '|' => Some(Token::Pipe(char_token)),
+            '#' => Some(Token::Hashtag(char_token)),
+            _ => None,
+        };
+        match token {
+            Some(t) => Ok(DebugToken {
+                token: t,
+                char_range: start_pointer..self.pointer,
+            }),
+            None => Err(InterpreterError::InvalidCharacterError(
+                self.get_error_prefix(),
+                debug::char_repr(first),
+            )),
+        }
+    }
+
+    fn peek(&self) -> Option<&char> {
+        self.string.get(self.pointer)
     }
 
     fn next(&mut self) -> Option<&char> {
@@ -186,6 +291,6 @@ impl Lexer {
             }
         }
 
-        format!("in line {}, column {}:", line + 1, column)
+        format!("in {}, line {}, column {}:", self.debug_info.source_name, line + 1, column)
     }
 }

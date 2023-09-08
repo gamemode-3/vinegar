@@ -1,30 +1,25 @@
-pub mod interpreter;
-use std::fs::File;
-use std::io::Read;
+mod debug;
+mod file_handler;
+mod interpreter;
+use interpreter::lexer::Lexer;
+use interpreter::parser::Parser;
 
-fn get_file_contents(path: &str) -> std::io::Result<String> {
-    let mut file = File::open(path)?;
 
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
+fn main() {
+    let path = "./working_files/test.vgr";
 
-    Ok(contents)
-}
+    let output = match Lexer::lex_file(path.into()) {
+        Ok(v) => debug::format_token_vec_simplified(&v),
+        Err(e) => format!("{}", e),
+    };
 
-fn main() -> std::io::Result<()> {
-    let string = get_file_contents("./working_files/test.vgr")?;
-    let result = interpreter::lexer::Lexer::lex(string);
-    match result {
-        Ok(tokens) => {
-            let mut formatted = format!("{:?}", tokens);
-            formatted = formatted
-                .replace(",", ",\n   ")
-                .replace("[", "[\n    ")
-                .replace("]", "\n]")
-                .replace("\n    char_range", " char_range");
-            println!("{}", formatted);
-        }
-        Err(err) => println!("{}", err),
-    }
-    Ok(())
+    println!("{}", output);
+
+
+    let output = match Parser::parse_file(path.into()) {
+        Ok(v) => format!("{:?}", &v),
+        Err(e) => format!("{}", e),
+    };
+
+    println!("{}", output)
 }

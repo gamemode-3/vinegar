@@ -1,6 +1,1 @@
-var = 3
-instance = Object:
-    boo: 1
-    something: 3 + 2 - 3 / 4 * 2
-
-string = "test \" string \\"
+a = "384"

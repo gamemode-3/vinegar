@@ -1,11 +1,24 @@
-use std::slice::Iter;
+use std::{rc::Rc, slice::Iter};
 
-struct MyStruct {
-    vector: Vec<usize>,
-    vector_iter: Iter<'static, Vec<usize>>,
+struct A {
+    b: EnumB,
 }
 
+enum EnumA {
+    A(Rc<A>),
+}
+
+struct B {
+    a: EnumA,
+}
+
+enum EnumB {
+    B(B),
+    C(C),
+}
+
+struct C {}
+
 fn main() {
-    let a: Vec<usize> = vec![];
-    a.into_iter();
+    EnumA::A(A { b: EnumB::C(C {}) });
 }

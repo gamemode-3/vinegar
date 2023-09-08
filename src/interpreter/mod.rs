@@ -1,3 +1,3 @@
-pub mod error_handling;
+pub mod debug;
 pub mod lexer;
 pub mod parser;
