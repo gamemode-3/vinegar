@@ -6,6 +6,7 @@ use lazy_static::lazy_static;
 use std::char;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use unescaper::unescape;
 
 lazy_static! {
     static ref SPACE_CHARS: HashMap<char, usize> = {
@@ -20,13 +21,17 @@ lazy_static! {
     static ref WORD_CHARS: HashSet<char> = {
         let mut set = HashSet::new();
         set.insert('_');
+        set.insert('#');
         set
     };
 }
 
-#[derive(Debug)]
-pub struct TokenWord {
-    pub word: String,
+lazy_static! {
+    static ref NUM_CHARS: HashSet<char> = {
+        let mut set = HashSet::new();
+        set.insert('e');
+        set
+    };
 }
 
 #[derive(Debug)]
@@ -35,31 +40,42 @@ pub struct TokenNewLine {
 }
 
 #[derive(Debug)]
-pub struct TokenExplicitString {
-    pub string: String,
-}
-
-#[derive(Debug)]
-pub struct TokenChar {
-    pub character: char,
-}
-
-#[derive(Debug)]
 pub enum Token {
-    Word(TokenWord),
+    Word(String),
     NewLine(TokenNewLine),
-    ExplicitString(TokenExplicitString),
-    ParenOpen(TokenChar),
-    ParenClose(TokenChar),
-    Colon(TokenChar),
-    Equals(TokenChar),
-    Comma(TokenChar),
-    Plus(TokenChar),
-    Minus(TokenChar),
-    Star(TokenChar),
-    Slash(TokenChar),
-    Pipe(TokenChar),
-    Hashtag(TokenChar),
+    StringLiteral(String),
+    ParenOpen,
+    ParenClose,
+    Colon,
+    Period,
+    Equals,
+    Comma,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Pipe,
+}
+
+impl Token {
+    pub fn simple_string(&self) -> String {
+        match self {
+            Token::Word(s) => format!("\"{}\"", s),
+            Token::NewLine(n) => format!("<newline {}>", n.indent),
+            Token::StringLiteral(s) => format!("<string_literal \"{}\">", s),
+            Token::ParenOpen => ("\'(\'").into(),
+            Token::ParenClose => ("\')\'").into(),
+            Token::Colon => ("\':\'").into(),
+            Token::Period => ("\'.\'").into(),
+            Token::Equals => ("\'=\'").into(),
+            Token::Comma => ("\',\'").into(),
+            Token::Plus => ("\'+\'").into(),
+            Token::Minus => ("\'-\'").into(),
+            Token::Star => ("\'*\'").into(),
+            Token::Slash => ("\'/\'").into(),
+            Token::Pipe => ("\'|\'").into(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -69,12 +85,43 @@ pub struct DebugToken {
 }
 
 trait VinegarChar {
-    fn is_word_char(&self) -> bool;
+    fn is_word_char_alphanum(&self) -> bool;
+    fn is_word_char_num(&self) -> bool;
 }
 
 impl VinegarChar for char {
-    fn is_word_char(&self) -> bool {
+    fn is_word_char_alphanum(&self) -> bool {
         self.is_alphanumeric() || WORD_CHARS.contains(self)
+    }
+
+    fn is_word_char_num(&self) -> bool {
+        self.is_numeric() || NUM_CHARS.contains(self)
+    }
+}
+
+pub trait ContainsRange {
+    fn contains_range(&self, other: &Self) -> bool;
+}
+
+impl<T> ContainsRange for Range<T>
+where
+    T: PartialOrd,
+{
+    fn contains_range(&self, other: &Self) -> bool {
+        self.start <= other.start && self.end >= other.end
+    }
+}
+
+trait SliceIfContained<T> {
+    fn slice_if_contained(&self, range: Range<usize>) -> Option<&[T]>;
+}
+
+impl<T> SliceIfContained<T> for Vec<T> {
+    fn slice_if_contained(&self, range: Range<usize>) -> Option<&[T]> {
+        if (0..self.len()).contains_range(&range) {
+            return Some(&self[range]);
+        }
+        return None;
     }
 }
 
@@ -92,7 +139,7 @@ impl Lexer {
         let mut instance = Self {
             debug_info: match debug_info {
                 Some(d) => d,
-                None => DebugInfo::new("(unknown source)".to_string()),
+                None => DebugInfo::new(Some(string.clone()), "(unknown source)".to_string()),
             },
             string: string.chars().collect(),
             pointer: 0,
@@ -106,7 +153,7 @@ impl Lexer {
             Err(err) => return Err(FileInterpreterError::IOError(err)),
         };
         let mut instance = Self {
-            debug_info: DebugInfo::new(format!("\"{}\"", path)),
+            debug_info: DebugInfo::new(Some(file_content.clone()), format!("\"{}\"", path)),
             string: file_content.chars().collect(),
             pointer: 0,
         };
@@ -128,67 +175,101 @@ impl Lexer {
                 self.next();
                 continue;
             }
-            all_tokens.push(self.next_token(current)?);
+            if let Some(token) = self.next_token(current)? {
+                all_tokens.push(token);
+            }
         }
 
         Ok(all_tokens)
     }
 
-    fn next_token(&mut self, first: char) -> Result<DebugToken, InterpreterError> {
+    fn next_token(&mut self, first: char) -> Result<Option<DebugToken>, InterpreterError> {
         let start_pointer = self.pointer;
-
-        if first.is_word_char() {
+        if first.is_word_char_num() {
+            Ok(Some(self.next_number(start_pointer)?))
+        } else if first.is_word_char_alphanum() {
             self.next_word(start_pointer)
         } else if first == '\n' {
-            self.next_newline(start_pointer)
+            self.next();
+            Ok(Some(self.next_newline(start_pointer)?))
         } else if first == '"' || first == '\'' {
-            self.next_explicit_string(first, start_pointer)
+            Ok(Some(self.next_explicit_string(first, start_pointer)?))
         } else {
-            self.next_single_char(first, start_pointer)
+            Ok(Some(self.next_single_char(first, start_pointer)?))
         }
     }
 
-    fn next_word(
-        &mut self,
-        start_pointer: usize,
-    ) -> Result<DebugToken, InterpreterError> {
+    fn next_word(&mut self, start_pointer: usize) -> Result<Option<DebugToken>, InterpreterError> {
         let mut word = String::new();
 
-        while let Some(&character) = self.next() {
-            if !character.is_word_char() {
+        if self.peek() == Some(&'#') {
+            match self.peek_n(1) {
+                Some(' ') => {
+                    loop {
+                        let peek = self.peek();
+                        if peek == Some(&'\n') || peek == None {
+                            break;
+                        }
+                        self.next();
+                    }
+                    return Ok(None);
+                }
+                Some('#') => {
+                    if self.peek_n(2) == Some(&'(') {
+                        while !(self
+                            .string
+                            .slice_if_contained(self.pointer..self.pointer + 3)
+                            == Some(&[')', '#', '#']))
+                        {
+                            self.next();
+                        }
+                        self.next();
+                        self.next();
+                        self.next();
+                        return Ok(None);
+                    }
+                }
+                _ => (),
+            }
+        }
+        while let Some(&character) = self.peek() {
+            if !character.is_word_char_alphanum() {
                 break;
             }
+            self.next();
+            word.push(character);
+        }
+        return Ok(Some(DebugToken {
+            token: Token::Word(word),
+            char_range: start_pointer..self.pointer,
+        }));
+    }
+
+    fn next_number(&mut self, start_pointer: usize) -> Result<DebugToken, InterpreterError> {
+        let mut word = String::new();
+
+        while let Some(&character) = self.peek() {
+            if !character.is_word_char_num() {
+                break;
+            }
+            self.next();
             word.push(character);
         }
         return Ok(DebugToken {
-            token: Token::Word(TokenWord { word: word }),
+            token: Token::Word(word),
             char_range: start_pointer..self.pointer,
         });
     }
 
     fn next_newline(&mut self, start_pointer: usize) -> Result<DebugToken, InterpreterError> {
         let mut indent = 0;
-        let mut current = match self.next() {
-            Some(c) => c,
-            None => {
-                return Ok(DebugToken {
-                    token: Token::NewLine(TokenNewLine { indent: 0 }),
-                    char_range: start_pointer..self.pointer,
-                });
-            }
-        };
-        loop {
-            indent += match SPACE_CHARS.get(&current) {
+        while let Some(next_char) = self.peek() {
+            indent += match SPACE_CHARS.get(next_char) {
                 Some(i) => i,
                 None => break,
             };
-            if let Some(next_char) = self.next() {
-                current = next_char;
-            } else {
-                break;
-            }
+            self.next();
         }
-
         return Ok(DebugToken {
             token: Token::NewLine(TokenNewLine { indent }),
             char_range: start_pointer..self.pointer,
@@ -201,7 +282,7 @@ impl Lexer {
         start_pointer: usize,
     ) -> Result<DebugToken, InterpreterError> {
         self.next();
-        
+
         let quote_type = first;
 
         let mut string = String::new();
@@ -218,18 +299,28 @@ impl Lexer {
             }
             if character == '\\' {
                 escaping_quotes = !escaping_quotes;
+            } else {
+                escaping_quotes = false;
             }
             string.push(character);
         }
 
-        return match next {
-            Some(_) => {
-                self.next();
-                Ok(DebugToken {
-                    token: Token::ExplicitString(TokenExplicitString { string: string }),
-                    char_range: start_pointer..self.pointer,
-                })
+        let unescaped_string = match unescape(&string) {
+            Ok(s) => s,
+            Err(_) => {
+                return Err(InterpreterError::InvalidLiteralError(
+                    self.get_error_prefix(),
+                    format!("\"{}\"", string),
+                    "".into(),
+                ))
             }
+        };
+
+        return match next {
+            Some(_) => Ok(DebugToken {
+                token: Token::StringLiteral(unescaped_string),
+                char_range: start_pointer..self.pointer,
+            }),
             None => Err(InterpreterError::UnexpectedEndOfFileError(
                 self.get_error_prefix(),
                 format!("expected '{}'.", debug::char_repr(quote_type),),
@@ -243,19 +334,18 @@ impl Lexer {
         start_pointer: usize,
     ) -> Result<DebugToken, InterpreterError> {
         self.next();
-        let char_token = TokenChar { character: first };
         let token = match first {
-            '(' => Some(Token::ParenOpen(char_token)),
-            ')' => Some(Token::ParenClose(char_token)),
-            '=' => Some(Token::Equals(char_token)),
-            ':' => Some(Token::Colon(char_token)),
-            ',' => Some(Token::Comma(char_token)),
-            '+' => Some(Token::Plus(char_token)),
-            '-' => Some(Token::Minus(char_token)),
-            '*' => Some(Token::Star(char_token)),
-            '/' => Some(Token::Slash(char_token)),
-            '|' => Some(Token::Pipe(char_token)),
-            '#' => Some(Token::Hashtag(char_token)),
+            '(' => Some(Token::ParenOpen),
+            ')' => Some(Token::ParenClose),
+            '=' => Some(Token::Equals),
+            ':' => Some(Token::Colon),
+            '.' => Some(Token::Period),
+            ',' => Some(Token::Comma),
+            '+' => Some(Token::Plus),
+            '-' => Some(Token::Minus),
+            '*' => Some(Token::Star),
+            '/' => Some(Token::Slash),
+            '|' => Some(Token::Pipe),
             _ => None,
         };
         match token {
@@ -272,6 +362,10 @@ impl Lexer {
 
     fn peek(&self) -> Option<&char> {
         self.string.get(self.pointer)
+    }
+
+    fn peek_n(&self, n: usize) -> Option<&char> {
+        self.string.get(self.pointer + n)
     }
 
     fn next(&mut self) -> Option<&char> {
@@ -291,6 +385,11 @@ impl Lexer {
             }
         }
 
-        format!("in {}, line {}, column {}:", self.debug_info.source_name, line + 1, column)
+        format!(
+            "in {}, line {}, column {}:",
+            self.debug_info.source_name,
+            line + 1,
+            column
+        )
     }
 }

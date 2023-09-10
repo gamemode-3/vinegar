@@ -1,48 +1,9 @@
-[
-   Word(TokenWord { word: "var" }),
-   Space(TokenSpace { size: 1 }),
-   Equals,
-   Space(TokenSpace { size: 1 }),
-   Word(TokenWord { word: "" }),
-   NewLine,
-   Word(TokenWord { word: "nstance" }),
-   Space(TokenSpace { size: 1 }),
-   Equals,
-   Space(TokenSpace { size: 1 }),
-   Word(TokenWord { word: "bject" }),
-   Colon,
-   NewLine,
-   Space(TokenSpace { size: 1 }),
-   Space(TokenSpace { size: 1 }),
-   Space(TokenSpace { size: 1 }),
-   Space(TokenSpace { size: 1 }),
-   Word(TokenWord { word: "oo" }),
-   Colon,
-   Space(TokenSpace { size: 1 }),
-   Word(TokenWord { word: "" }),
-   NewLine,
-   Space(TokenSpace { size: 1 }),
-   Space(TokenSpace { size: 1 }),
-   Space(TokenSpace { size: 1 }),
-   Space(TokenSpace { size: 1 }),
-   Word(TokenWord { word: "omething" }),
-   Colon,
-   Space(TokenSpace { size: 1 }),
-   Word(TokenWord { word: "" }),
-   Space(TokenSpace { size: 1 }),
-   Plus,
-   Space(TokenSpace { size: 1 }),
-   Word(TokenWord { word: "" }),
-   Space(TokenSpace { size: 1 }),
-   Minus,
-   Space(TokenSpace { size: 1 }),
-   Word(TokenWord { word: "" }),
-   Space(TokenSpace { size: 1 }),
-   Slash,
-   Space(TokenSpace { size: 1 }),
-   Word(TokenWord { word: "" }),
-   Space(TokenSpace { size: 1 }),
-   Star,
-   Space(TokenSpace { size: 1 }),
-   Word(TokenWord { word: "" })
-]
+a = 3 + 1 * (4 + (
+   ident.(member1, member2)
+) + 5) / 3
+
+ident.member1
+ident.member2
+
+ident member1
+ident member2

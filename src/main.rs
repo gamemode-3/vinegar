@@ -4,6 +4,7 @@ mod interpreter;
 use interpreter::lexer::Lexer;
 use interpreter::parser::Parser;
 
+use crate::interpreter::interpreter::Interpreter;
 
 fn main() {
     let path = "./working_files/test.vgr";
@@ -15,11 +16,16 @@ fn main() {
 
     println!("{}", output);
 
-
     let output = match Parser::parse_file(path.into()) {
         Ok(v) => format!("{:?}", &v),
         Err(e) => format!("{}", e),
     };
 
-    println!("{}", output)
+    println!("{}", output);
+
+
+    match Interpreter::interpret_file(path.into()) {
+        Ok(_) => (),
+        Err(e) => println!("{}", e),
+    };
 }
