@@ -2,14 +2,6 @@ use crate::interpreter::lexer::DebugToken;
 use lazy_static::lazy_static;
 use std::collections::HashSet;
 
-pub fn format_token_vec(tokens: &Vec<DebugToken>) -> String {
-    let mut rv = "[".to_string();
-    for t in tokens {
-        rv = format!("{}\n    {:?},", rv, t);
-    }
-    format!("{}\n]", rv)
-}
-
 pub fn format_token_vec_simplified(tokens: &Vec<DebugToken>) -> String {
     let mut rv = "[".to_string();
     for t in tokens {
@@ -21,7 +13,7 @@ pub fn format_token_vec_simplified(tokens: &Vec<DebugToken>) -> String {
 pub fn char_repr(c: char) -> String {
     c.escape_debug().to_string().replace("\\\"", "\"")
 }
-
+ 
 lazy_static! {
     static ref OPEN_PAREN: HashSet<char> = {
         let mut set = HashSet::new();
@@ -42,6 +34,7 @@ lazy_static! {
     };
 }
 
+#[allow(dead_code)]
 pub fn format_parens(s: &str, max_substr_len: usize) -> String {
     let string_vec = format_parens_recurse(s, 0, max_substr_len).0;
     let mut rv = String::new();
@@ -51,7 +44,6 @@ pub fn format_parens(s: &str, max_substr_len: usize) -> String {
 
 fn format_parens_recurse(s: &str, indent: usize, max_substr_len: usize) -> (Vec<String>, usize) {
     let mut string_chars = s.chars().enumerate().peekable();
-
 
     let mut current_string = String::new();
     let mut final_vec = vec![];
@@ -67,7 +59,8 @@ fn format_parens_recurse(s: &str, indent: usize, max_substr_len: usize) -> (Vec<
         // println!("{}, {}", pointer, format!("{:?}", string_chars.nth(pointer)));
         if OPEN_PAREN.contains(&this_char) {
             current_string.push(this_char);
-            let (substring, chars_consumed) = format_parens_recurse(&s[i + 1..s.len()], indent + 1, max_substr_len);
+            let (substring, chars_consumed) =
+                format_parens_recurse(&s[i + 1..s.len()], indent + 1, max_substr_len);
             let closing_paren = string_chars.nth(chars_consumed).unwrap().1;
             let mut full_substring_len = (substring.len() - 1) * 2;
             for s in &substring {
@@ -86,8 +79,7 @@ fn format_parens_recurse(s: &str, indent: usize, max_substr_len: usize) -> (Vec<
                 for _ in 0..((indent) * 4) {
                     current_string.push(' ');
                 }
-            }
-            else {
+            } else {
                 current_string.push_str(&substring.join(", "));
             }
             current_string.push(closing_paren)

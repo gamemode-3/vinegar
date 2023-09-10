@@ -14,6 +14,9 @@ pub enum InterpreterError {
     #[error("{0}\nunexpected indent.")]
     UnexpectedIndentError(String),
 
+    #[error("{0}\n{1}")]
+    ExpectedIndentError(String, String),
+
     #[error("{0}\nunexpected token: {1}. {2}")]
     UnexpectedTokenError(String, String, String),
 
@@ -44,8 +47,14 @@ pub enum VinegarError {
     #[error("{0} is of type {1}, which is not callable.")]
     NotCallableError(String, String),
 
-    #[error("{0}")]    
-    InvalidArgumentsError(String)
+    #[error("{0}")]
+    InvalidArgumentsError(String),
+
+    #[error("{0}")]
+    TypeError(String),
+
+    #[error("attribute not found: {0}")]
+    AttributeNotFound(String),
 }
 
 #[derive(Debug, Error)]

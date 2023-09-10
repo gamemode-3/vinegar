@@ -8,6 +8,46 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::vec;
 
+macro_rules! expect_token {
+    ($self:expr, $token_source:expr, $($pattern:pat => $result:expr),* $(,)?; $msg:expr) => {
+        match $token_source {
+            $(
+                Some($pattern) => $result,
+            )*
+            Some(t) => {
+                let token_str = t.simple_string();
+                return Err(InterpreterError::UnexpectedTokenError(
+                    $self.get_error_prefix(),
+                    token_str,
+                    $msg.to_string(),
+                ));
+            }
+            _ => {
+                return Err(InterpreterError::UnexpectedEndOfFileError(
+                    $self.get_error_prefix(),
+                    $msg.to_string(),
+                ));
+            }
+        }
+    };
+}
+
+macro_rules! expect_any_token {
+    ($self:expr, $token_source:expr, $($pattern:pat => $result:expr),* $(,)?; $msg:expr) => {
+        match $token_source {
+            $(
+                Some($pattern) => $result,
+            )*
+            _ => {
+                return Err(InterpreterError::UnexpectedEndOfFileError(
+                    $self.get_error_prefix(),
+                    $msg.to_string(),
+                ));
+            }
+        }
+    };
+}
+
 lazy_static! {
     static ref LITERAL_PREFIXES: HashMap<String, u32> = {
         let mut set = HashMap::new();
@@ -152,6 +192,7 @@ pub struct Assignment {
 #[derive(Debug, Clone)]
 pub struct FunctionDefinition {
     pub name: String,
+    pub args: Vec<String>,
     pub body: CodeBody,
 }
 
@@ -229,6 +270,7 @@ impl Parser {
         instance.get_tree()
     }
 
+    #[allow(dead_code)]
     pub fn parse_string(
         s: String,
         debug_info: Option<DebugInfo>,
@@ -273,31 +315,30 @@ impl Parser {
                 ));
             }
         }
-        self.next_code_body()
-    }
-
-    fn next_code_body(&mut self) -> Result<CodeBody, InterpreterError> {
         let indent: usize = match self.next_token() {
             Some(Token::NewLine(s)) => s.indent,
             Some(_) => 0,
             None => return Ok(CodeBody { statements: vec![] }),
         };
+        self.next_code_body(indent)
+    }
 
+    fn next_code_body(&mut self, indent: usize) -> Result<CodeBody, InterpreterError> {
         let mut statements = vec![];
 
         loop {
-            let this_statement = self.next_statement()?;
+            let this_statement = self.next_statement(indent)?;
             match this_statement {
                 None => break,
                 Some(statement) => statements.push(statement),
             }
-            match self.next_token() {
+            match self.peek_token() {
                 Some(Token::NewLine(n)) => {
                     if n.indent < indent {
                         break;
                     };
                     if n.indent > indent {
-                        self.next();
+                        self.move_n(2);
                         return Err(InterpreterError::UnexpectedIndentError(
                             self.get_error_prefix(),
                         ));
@@ -305,6 +346,7 @@ impl Parser {
                 }
                 Some(t) => {
                     let token_str = t.simple_string();
+                    self.move_n(1);
                     return Err(InterpreterError::UnexpectedTokenError(
                         self.get_error_prefix(),
                         token_str,
@@ -320,7 +362,7 @@ impl Parser {
         })
     }
 
-    fn next_statement(&mut self) -> Result<Option<Statement>, InterpreterError> {
+    fn next_statement(&mut self, indent: usize) -> Result<Option<Statement>, InterpreterError> {
         while let Some(Token::NewLine(_)) = self.peek_token() {
             self.next();
         }
@@ -333,19 +375,55 @@ impl Parser {
         if let Token::Word(first_word) = next_token {
             // check for function definition pattern "WORD(def) WORD PAREN_OPEN"
             if first_word == "def" {
-                self.print_next_n(3);
                 if let (Some(Token::Word(name)), Some(Token::ParenOpen)) =
-                    (self.peek_token(), self.peek_n_token(1))
+                    (self.peek_n_token(1), self.peek_n_token(2))
                 {
                     let name = name.to_string();
-                    self.next();
-                    self.next();
+                    self.move_n(3);
+
+                    expect_token!(
+                        self, self.next_token(),
+                        Token::ParenClose => ();
+                        "expected closing parenthesis."
+                    );
+
+                    expect_token!(
+                        self, self.next_token(),
+                        Token::Colon => ();
+                        "expected colon."
+                    );
+
+                    let mut next_indent = expect_token!(
+                        self, self.next_token(),
+                        Token::NewLine(n) => n;
+                        "expected new line."
+                    )
+                    .indent;
+
+                    while let Some(Token::NewLine(n)) = self.peek_token() {
+                        next_indent = n.indent;
+                        self.next();
+                    }
+
+                    if next_indent <= indent {
+                        return Err(InterpreterError::ExpectedIndentError(
+                            self.get_error_prefix(),
+                            "expected indented block for function declaration.".into(),
+                        ));
+                    }
+                    let body = self.next_code_body(next_indent)?;
+
                     return Ok(Some(Statement::from(FunctionDefinition {
                         name: name,
-                        body: CodeBody { statements: vec![] },
+                        args: vec![],
+                        body: body,
                     })));
                 }
-                todo!()
+                self.next();
+                return Err(InterpreterError::MissingTokenError(
+                    self.get_error_prefix(),
+                    "expected function definition after keyword \"def\"".into(),
+                ));
             }
         }
 
@@ -599,6 +677,11 @@ impl Parser {
             self.paren_depth += 1;
             loop {
                 self.next();
+                expect_any_token!(self, self.peek_token(),
+                    Token::ParenClose => break,
+                    _ => ();
+                    "expected expression or closing parentheses."
+                );
                 let expr = match self.next_expression(0)? {
                     Some(expr) => expr,
                     None => {
@@ -608,25 +691,13 @@ impl Parser {
                     }
                 };
                 all_args.push(expr);
-                match self.peek_token() {
-                    Some(Token::Comma) => {
+                expect_token!(self, self.peek_token(),
+                    Token::Comma => {
                         continue;
-                    }
-                    Some(Token::ParenClose) => break,
-                    Some(t) => {
-                        return Err(InterpreterError::UnexpectedTokenError(
-                            self.get_error_prefix(),
-                            t.simple_string(),
-                            "expected comma or closing parentheses.".into(),
-                        ))
-                    }
-                    None => {
-                        return Err(InterpreterError::MissingTokenError(
-                            self.get_error_prefix(),
-                            "expected closing parentheses.".into(),
-                        ))
-                    }
-                }
+                    },
+                    Token::ParenClose => break;
+                    "expected comma or closing parentheses."
+                )
             }
             self.paren_depth -= 1;
             self.next();
@@ -719,7 +790,7 @@ impl Parser {
         self.tokens.get(temp_pointer)
     }
 
-    fn peek_n(&self, n: usize) -> Option<&DebugToken> {
+    fn _peek_n(&self, n: usize) -> Option<&DebugToken> {
         let mut temp_pointer = self.pointer;
         if self.paren_depth > 0 {
             for _ in 0..n {
@@ -741,6 +812,16 @@ impl Parser {
         }
 
         rv
+    }
+
+    fn move_n(&mut self, n: usize) -> () {
+        if self.paren_depth > 0 {
+            for _ in 0..n {
+                self.pointer = self.skip_newline_forward(self.pointer + 1);
+            }
+        } else {
+            self.pointer += n;
+        }
     }
 
     fn prev_token(&self) -> Option<&Token> {
@@ -784,10 +865,10 @@ impl Parser {
         }
     }
 
-    fn print_next_n(&mut self, n: usize) {
+    fn _print_next_n(&mut self, n: usize) {
         println!("printing next {} tokens", n);
         for i in 0..n {
-            println!("{:?}", self.peek_n(i))
+            println!("{:?}", self._peek_n(i))
         }
     }
 

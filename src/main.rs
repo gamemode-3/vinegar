@@ -23,7 +23,6 @@ fn main() {
 
     println!("{}", output);
 
-
     match Interpreter::interpret_file(path.into()) {
         Ok(_) => (),
         Err(e) => println!("{}", e),

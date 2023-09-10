@@ -7,3 +7,14 @@ edition = "2021"
 thiserror = "1"
 lazy_static = "1.4"
 unescaper = "0.1.2"
+
+rust_struct_wrapper_macro = { path = "rust_struct_wrapper_macro" }
+
+
+[lib]
+name = "vinegar"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vinegar"
+path = "src/main.rs"

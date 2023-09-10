@@ -1,1 +1,10 @@
-def function(
+def function():
+    print("Hello", "\n")
+
+
+
+
+
+a = Duck("Hello", 39, 3.3)
+
+print(a, "\n")

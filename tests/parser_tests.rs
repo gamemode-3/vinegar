@@ -2,7 +2,6 @@
 mod tests {
     use vinegar::debug;
     use vinegar::interpreter::parser::*;
-
     #[test]
     fn test_on_file() {
         let path = "./working_files/test.vgr";

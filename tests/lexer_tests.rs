@@ -2,7 +2,6 @@
 mod tests {
     use vinegar::debug;
     use vinegar::interpreter::lexer::*;
-
     #[test]
     fn test_on_file() {
         let output = match Lexer::lex_file("./working_files/test.vgr".to_string()) {

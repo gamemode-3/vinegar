@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     hash::{BuildHasherDefault, Hash, Hasher},
@@ -11,8 +12,8 @@ use super::{
     debug::{DebugInfo, FileInterpreterError, InterpreterError, VinegarError},
     lexer::Lexer,
     parser::{
-        Assignment, BinaryOperator, CodeBody, Expression, FunctionCall, Literal, Parser, Statement,
-        VariableName,
+        Assignment, BinaryOperator, CodeBody, Expression, FunctionCall, FunctionDefinition,
+        Literal, Parser, Statement, VariableName,
     },
     vinegar_std,
 };
@@ -40,13 +41,11 @@ pub type ManualHashMap<K, V> = HashMap<K, V, BuildHasherDefault<NoHasher>>;
 
 #[derive(Clone)]
 pub struct RustFunctionWrapper {
-    pub runner: Box<
-        &'static dyn Fn(
-            &VinegarScope,
-            &ManualHashMap<u64, String>,
-            &Vec<VinegarObject>,
-        ) -> Result<VinegarObject, InterpreterError>,
-    >,
+    pub runner: &'static dyn Fn(
+        &VinegarScope,
+        &ManualHashMap<u64, String>,
+        &Vec<VinegarObject>,
+    ) -> Result<VinegarObject, VinegarError>,
 }
 
 impl RustFunctionWrapper {
@@ -55,7 +54,7 @@ impl RustFunctionWrapper {
         global_scope: &VinegarScope,
         string_literals: &ManualHashMap<u64, String>,
         args: &Vec<VinegarObject>,
-    ) -> Result<VinegarObject, InterpreterError> {
+    ) -> Result<VinegarObject, VinegarError> {
         (*self.runner)(global_scope, string_literals, args)
     }
 }
@@ -74,7 +73,7 @@ impl std::fmt::Debug for FunctionBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FunctionBody::VinegarBody(code_body) => write!(f, "VinegarBody({:?})", code_body),
-            FunctionBody::RustWrapper(_) => write!(f, "RustWrapper(...)"),
+            FunctionBody::RustWrapper(_) => write!(f, "<RustWrapper>"),
         }
     }
 }
@@ -87,6 +86,7 @@ pub enum VinegarObject {
     Float(f64),
     Function(Vec<String>, FunctionBody),
     List(Vec<VinegarObject>),
+    RustStructWrapper(RustStructWrapper),
 }
 
 impl VinegarObject {
@@ -178,6 +178,7 @@ impl VinegarObject {
             VinegarObject::String(_) => "String",
             VinegarObject::Function(..) => "Function",
             VinegarObject::List(..) => "List",
+            VinegarObject::RustStructWrapper(..) => "RustStructWrapper",
         }
     }
 
@@ -189,8 +190,201 @@ impl VinegarObject {
             VinegarObject::String(_) => 3,
             VinegarObject::Function(..) => 4,
             VinegarObject::List(..) => 5,
+            VinegarObject::RustStructWrapper(..) => 6,
         }
     }
+
+    pub fn as_string<'a>(
+        &'a self,
+        string_literals: &'a ManualHashMap<u64, String>,
+    ) -> Result<&String, VinegarError> {
+        match self {
+            VinegarObject::String(s) => Ok(string_literals.get(s).unwrap()),
+            _ => Err(VinegarError::TypeError(format!(
+                "cannot represent {} as Rust String",
+                self.type_name()
+            ))),
+        }
+    }
+
+    pub fn as_usize(&self) -> Result<usize, VinegarError> {
+        match self {
+            &VinegarObject::Int(i) => {
+                if i < 0 {
+                    Err(VinegarError::TypeError(format!(
+                        "cannot represent negative Int {} as Rust usize",
+                        i
+                    )))
+                } else {
+                    Ok(i as usize)
+                }
+            }
+            &VinegarObject::Float(f) => {
+                if f < 0.0 {
+                    Err(VinegarError::TypeError(format!(
+                        "cannot represent negative Float {} as Rust usize",
+                        f
+                    )))
+                } else {
+                    let fract = f.fract();
+                    if fract < 0.0000001 {
+                        return Ok(f as usize);
+                    }
+                    if fract > 0.9999999 {
+                        return Ok(f as usize + 1);
+                    }
+                    Err(VinegarError::TypeError(format!(
+                        "cannot represent fractional Float {} as Rust usize",
+                        f
+                    )))
+                }
+            }
+            _ => Err(VinegarError::TypeError(format!(
+                "cannot represent {} as Rust usize",
+                self.type_name()
+            ))),
+        }
+    }
+
+    pub fn as_i64(&self) -> Result<i64, VinegarError> {
+        match self {
+            &VinegarObject::Int(i) => Ok(i),
+            &VinegarObject::Float(f) => {
+                if f < 0.0 {
+                    Err(VinegarError::TypeError(format!(
+                        "cannot represent negative Float {} as Rust usize",
+                        f
+                    )))
+                } else {
+                    let fract = f.fract();
+                    if fract < 0.0000001 {
+                        return Ok(f as i64);
+                    }
+                    if fract > 0.9999999 {
+                        return Ok(f as i64 + 1);
+                    }
+                    Err(VinegarError::TypeError(format!(
+                        "cannot represent fractional Float {} as Rust usize",
+                        f
+                    )))
+                }
+            }
+            _ => Err(VinegarError::TypeError(format!(
+                "cannot represent {} as Rust usize",
+                self.type_name()
+            ))),
+        }
+    }
+
+    pub fn as_f64(&self) -> Result<f64, VinegarError> {
+        match self {
+            &VinegarObject::Float(f) => Ok(f),
+            &VinegarObject::Int(i) => Ok(i as f64),
+            _ => Err(VinegarError::TypeError(format!(
+                "cannot represent {} as Rust usize",
+                self.type_name()
+            ))),
+        }
+    }
+
+    pub fn format_string(
+        &self,
+        string_literals: &ManualHashMap<u64, String>,
+    ) -> Result<String, VinegarError> {
+        Ok(match self {
+            VinegarObject::None => "None".to_string(),
+            VinegarObject::Int(i) => format!("{}", i),
+            VinegarObject::Float(f) => format!("{}", f),
+            VinegarObject::String(s) => format!("{}", string_literals[s]),
+            VinegarObject::List(l) => {
+                let mut object_strings: Vec<String> = Vec::new();
+                for o in l {
+                    object_strings.push(o.format_string(string_literals)?);
+                }
+                format!("{}", object_strings.join(" | "))
+            }
+            VinegarObject::Function(args, body) => format!(
+                "{}({})",
+                match body {
+                    FunctionBody::VinegarBody(..) => "vinegar_function",
+                    FunctionBody::RustWrapper(..) => "rust_function_wrapper",
+                },
+                args.join(", ")
+            ),
+            VinegarObject::RustStructWrapper(w) => {
+                format!("<RustStructWrapper {{ object: {} }}>", w.object.lock().unwrap().to_string(string_literals)?)
+            }
+        })
+    }
+
+    pub fn from_struct<T>(struct_: T) -> VinegarObject
+    where
+        T: RustStructInterface + 'static,
+    {
+        VinegarObject::RustStructWrapper(RustStructWrapper {
+            object: Arc::new(Mutex::new(struct_)),
+        })
+    }
+}
+
+pub trait RustStructInterface: std::fmt::Debug {
+    fn get_attribute(
+        &self,
+        name: String,
+        string_literals: &mut ManualHashMap<u64, String>,
+        string_hasher: &mut DefaultHasher,
+    ) -> Result<VinegarObject, VinegarError>;
+
+    fn set_attribute(
+        &mut self,
+        name: String,
+        value: VinegarObject,
+        string_literals: &ManualHashMap<u64, String>,
+    ) -> Result<(), VinegarError>;
+
+    fn to_string(
+        &self,
+        string_literals: &ManualHashMap<u64, String>,
+    ) -> Result<String, VinegarError>;
+
+    fn write_debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+}
+
+pub trait VinegarConstructor {
+    fn new_vinegar(
+        _global_scope: &VinegarScope,
+        string_literals: &ManualHashMap<u64, String>,
+        args: &Vec<VinegarObject>,
+    ) -> Result<VinegarObject, VinegarError>;
+
+    fn import_vinegar_constructor(scope: &mut VinegarScope);
+}
+
+#[derive(Clone)]
+pub struct RustStructWrapper {
+    pub object: Arc<Mutex<dyn RustStructInterface>>,
+}
+
+impl std::fmt::Debug for RustStructWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let locked_data = self.object.lock().unwrap();
+
+        locked_data.write_debug(f)
+    }
+}
+
+pub trait VinegarObjectConversion<T>
+where
+    T: Sized,
+    Self: Sized,
+{
+    fn into_other(&self, string_literals: &ManualHashMap<u64, String>) -> Result<T, VinegarError>;
+
+    fn from_other(
+        value: T,
+        string_literals: &mut ManualHashMap<u64, String>,
+        string_hasher: &mut DefaultHasher,
+    ) -> Result<Self, VinegarError>;
 }
 
 pub type VinegarScope = HashMap<String, VinegarObject>;
@@ -203,6 +397,7 @@ pub struct Interpreter {
     debug_info: DebugInfo,
 }
 impl Interpreter {
+    #[allow(dead_code)]
     pub fn interpret_string(
         s: &String,
         debug_info: Option<DebugInfo>,
@@ -262,18 +457,21 @@ impl Interpreter {
         &mut self,
         code_body: CodeBody,
     ) -> Result<VinegarObject, InterpreterError> {
+        let mut last_result = VinegarObject::None;
         for statement in code_body.statements {
-            match statement {
+            last_result = match statement {
                 Statement::Assignment(a) => {
                     self.interpret_assignment(&a)?;
+                    VinegarObject::None
                 }
-                Statement::Expression(e) => {
-                    self.interpret_expression(&e)?;
+                Statement::Expression(e) => self.interpret_expression(&e)?,
+                Statement::FunctionDefinition(f) => {
+                    self.interpret_function_definition(f)?;
+                    VinegarObject::None
                 }
-                Statement::FunctionDefinition(_) => todo!()
             };
         }
-        Ok(VinegarObject::None)
+        Ok(last_result)
     }
 
     fn interpret_assignment(&mut self, assignment: &Assignment) -> Result<(), InterpreterError> {
@@ -285,7 +483,7 @@ impl Interpreter {
                 *v = value;
             }
             None => {
-                local_scope.insert(assignment.name.clone(), value);
+                local_scope.insert(name.clone(), value);
             }
         }
         Ok(())
@@ -300,13 +498,12 @@ impl Interpreter {
             Expression::Literal(l) => self.interpret_literal(l),
             Expression::VariableName(v) => self.interpret_variable(v),
             Expression::FunctionCall(f) => self.interpret_function_call(f),
-            _ => Ok(VinegarObject::None),
         }
     }
 
     fn interpret_variable(&self, v: &VariableName) -> Result<VinegarObject, InterpreterError> {
         match v {
-            VariableName::Final(n, range) => {
+            VariableName::Final(n, _) => {
                 match self.global_scope.get(n) {
                     Some(v) => return Ok(v.clone()),
                     None => (),
@@ -396,10 +593,15 @@ impl Interpreter {
                 let result = match body {
                     FunctionBody::VinegarBody(b) => self.interpret_code_body(b),
                     FunctionBody::RustWrapper(w) => {
-                        w.run(&self.global_scope, &self.string_literals, &arg_results)
+                        match w.run(&self.global_scope, &self.string_literals, &arg_results) {
+                            Ok(result) => Ok(result),
+                            Err(err) => Err(InterpreterError::VinegarError(
+                                self.get_error_prefix(f.var.char_range()),
+                                err,
+                            )),
+                        }
                     }
                 };
-                self.local_stack.pop();
                 result
             }
             _ => {
@@ -409,6 +611,26 @@ impl Interpreter {
                 ))
             }
         }
+    }
+
+    fn interpret_function_definition(
+        &mut self,
+        func: FunctionDefinition,
+    ) -> Result<(), InterpreterError> {
+        let name = &func.name;
+
+        let value: VinegarObject =
+            VinegarObject::Function(func.args, FunctionBody::VinegarBody(func.body));
+        let local_scope = self.local_stack.last_mut().unwrap();
+        match local_scope.get_mut(name) {
+            Some(v) => {
+                *v = value;
+            }
+            None => {
+                local_scope.insert(name.clone(), value);
+            }
+        }
+        Ok(())
     }
 
     fn import_library<T>(&mut self)
