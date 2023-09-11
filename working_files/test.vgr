@@ -4,7 +4,6 @@ def function():
 
 
 
+a = Duck("Tom", 39, 3.3)
 
-a = Duck("Hello", 39, 3.3)
-
-print(a, "\n")
+print(a.v, "\n")

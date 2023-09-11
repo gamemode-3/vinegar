@@ -1,6 +1,6 @@
 extern crate lazy_static;
-use super::debug::FileInterpreterError;
-use super::{debug::DebugInfo, debug::InterpreterError};
+use super::debug::{FileOrOtherError, LexerError};
+use super::{debug::DebugInfo, debug::Error};
 use crate::{debug, file_handler};
 use lazy_static::lazy_static;
 use std::char;
@@ -135,7 +135,7 @@ impl Lexer {
     pub fn lex_string(
         string: String,
         debug_info: Option<DebugInfo>,
-    ) -> Result<Vec<DebugToken>, InterpreterError> {
+    ) -> Result<Vec<DebugToken>, Error> {
         let mut instance = Self {
             debug_info: match debug_info {
                 Some(d) => d,
@@ -147,10 +147,10 @@ impl Lexer {
         instance.get_tokens()
     }
 
-    pub fn lex_file(path: String) -> Result<Vec<DebugToken>, FileInterpreterError> {
+    pub fn lex_file(path: String) -> Result<Vec<DebugToken>, FileOrOtherError> {
         let file_content = match file_handler::get_file_contents(&path) {
             Ok(contents) => contents,
-            Err(err) => return Err(FileInterpreterError::IOError(err)),
+            Err(err) => return Err(FileOrOtherError::IOError(err)),
         };
         let mut instance = Self {
             debug_info: DebugInfo::new(Some(file_content.clone()), format!("\"{}\"", path)),
@@ -159,11 +159,11 @@ impl Lexer {
         };
         match instance.get_tokens() {
             Ok(tokens) => Ok(tokens),
-            Err(err) => Err(FileInterpreterError::InterpreterError(err)),
+            Err(err) => Err(FileOrOtherError::OtherError(err)),
         }
     }
 
-    fn get_tokens(&mut self) -> Result<Vec<DebugToken>, InterpreterError> {
+    fn get_tokens(&mut self) -> Result<Vec<DebugToken>, Error> {
         let mut all_tokens: Vec<DebugToken> = Vec::new();
         all_tokens.push(self.next_newline(self.pointer)?);
         if self.pointer > 0 {
@@ -183,7 +183,7 @@ impl Lexer {
         Ok(all_tokens)
     }
 
-    fn next_token(&mut self, first: char) -> Result<Option<DebugToken>, InterpreterError> {
+    fn next_token(&mut self, first: char) -> Result<Option<DebugToken>, Error> {
         let start_pointer = self.pointer;
         if first.is_word_char_num() {
             Ok(Some(self.next_number(start_pointer)?))
@@ -199,7 +199,7 @@ impl Lexer {
         }
     }
 
-    fn next_word(&mut self, start_pointer: usize) -> Result<Option<DebugToken>, InterpreterError> {
+    fn next_word(&mut self, start_pointer: usize) -> Result<Option<DebugToken>, Error> {
         let mut word = String::new();
 
         if self.peek() == Some(&'#') {
@@ -245,7 +245,7 @@ impl Lexer {
         }));
     }
 
-    fn next_number(&mut self, start_pointer: usize) -> Result<DebugToken, InterpreterError> {
+    fn next_number(&mut self, start_pointer: usize) -> Result<DebugToken, Error> {
         let mut word = String::new();
 
         while let Some(&character) = self.peek() {
@@ -261,7 +261,7 @@ impl Lexer {
         });
     }
 
-    fn next_newline(&mut self, start_pointer: usize) -> Result<DebugToken, InterpreterError> {
+    fn next_newline(&mut self, start_pointer: usize) -> Result<DebugToken, Error> {
         let mut indent = 0;
         while let Some(next_char) = self.peek() {
             indent += match SPACE_CHARS.get(next_char) {
@@ -280,7 +280,7 @@ impl Lexer {
         &mut self,
         first: char,
         start_pointer: usize,
-    ) -> Result<DebugToken, InterpreterError> {
+    ) -> Result<DebugToken, Error> {
         self.next();
 
         let quote_type = first;
@@ -308,10 +308,9 @@ impl Lexer {
         let unescaped_string = match unescape(&string) {
             Ok(s) => s,
             Err(_) => {
-                return Err(InterpreterError::InvalidLiteralError(
+                return Err(Error::LexerError(
                     self.get_error_prefix(),
-                    format!("\"{}\"", string),
-                    "".into(),
+                    LexerError::InvalidLiteralError(format!("\"{}\"", string), "".into()),
                 ))
             }
         };
@@ -321,18 +320,17 @@ impl Lexer {
                 token: Token::StringLiteral(unescaped_string),
                 char_range: start_pointer..self.pointer,
             }),
-            None => Err(InterpreterError::UnexpectedEndOfFileError(
+            None => Err(Error::LexerError(
                 self.get_error_prefix(),
-                format!("expected '{}'.", debug::char_repr(quote_type),),
+                LexerError::UnexpectedEndOfFileError(format!(
+                    "expected '{}'.",
+                    debug::char_repr(quote_type),
+                )),
             )),
         };
     }
 
-    fn next_single_char(
-        &mut self,
-        first: char,
-        start_pointer: usize,
-    ) -> Result<DebugToken, InterpreterError> {
+    fn next_single_char(&mut self, first: char, start_pointer: usize) -> Result<DebugToken, Error> {
         self.next();
         let token = match first {
             '(' => Some(Token::ParenOpen),
@@ -353,9 +351,9 @@ impl Lexer {
                 token: t,
                 char_range: start_pointer..self.pointer,
             }),
-            None => Err(InterpreterError::InvalidCharacterError(
+            None => Err(Error::LexerError(
                 self.get_error_prefix(),
-                debug::char_repr(first),
+                LexerError::InvalidCharacterError(debug::char_repr(first)),
             )),
         }
     }

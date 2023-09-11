@@ -13,7 +13,7 @@ pub fn format_token_vec_simplified(tokens: &Vec<DebugToken>) -> String {
 pub fn char_repr(c: char) -> String {
     c.escape_debug().to_string().replace("\\\"", "\"")
 }
- 
+
 lazy_static! {
     static ref OPEN_PAREN: HashSet<char> = {
         let mut set = HashSet::new();

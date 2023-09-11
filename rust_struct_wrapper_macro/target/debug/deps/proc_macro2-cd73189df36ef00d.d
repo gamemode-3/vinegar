@@ -1,0 +1,12 @@
+/home/simon/Documents/code/rust/vinegar/vinegar/rust_struct_wrapper_macro/target/debug/deps/proc_macro2-cd73189df36ef00d.rmeta: /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/lib.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/marker.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/parse.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/rcvec.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/detection.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/fallback.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/extra.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/wrapper.rs
+
+/home/simon/Documents/code/rust/vinegar/vinegar/rust_struct_wrapper_macro/target/debug/deps/proc_macro2-cd73189df36ef00d.d: /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/lib.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/marker.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/parse.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/rcvec.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/detection.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/fallback.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/extra.rs /home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/wrapper.rs
+
+/home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/lib.rs:
+/home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/marker.rs:
+/home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/parse.rs:
+/home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/rcvec.rs:
+/home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/detection.rs:
+/home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/fallback.rs:
+/home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/extra.rs:
+/home/simon/.cargo/registry/src/github.com-1ecc6299db9ec823/proc-macro2-1.0.66/src/wrapper.rs:

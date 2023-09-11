@@ -2,13 +2,13 @@ use super::{
     debug::VinegarError,
     interpreter::{
         FunctionBody, Library, ManualHashMap, RustFunctionWrapper, RustStructInterface,
-        VinegarObject, VinegarObjectConversion, VinegarScope, VinegarConstructor
+        VinegarConstructor, VinegarObject, VinegarObjectConversion, VinegarScope,
     },
 };
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 extern crate rust_struct_wrapper_macro;
-use rust_struct_wrapper_macro::{VinegarRustStructInterface, VinegarConstructor};
+use rust_struct_wrapper_macro::{VinegarConstructor, VinegarRustStructInterface};
 
 fn vinegar_print(
     _global_scope: &VinegarScope,
@@ -30,7 +30,6 @@ struct Duck {
     height_in_cm: usize,
     quack_volume: f64,
 }
-
 
 fn _vinegar_rep(string_literals: &ManualHashMap<u64, String>, object: &VinegarObject) -> String {
     match object {
@@ -70,10 +69,8 @@ impl Library for StandardLibrary {
             ),
         );
 
-
         Duck::import_vinegar_constructor(&mut scope);
-        
-        
+
         scope
     }
 }

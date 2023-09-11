@@ -29,9 +29,9 @@ pub fn vinegar_rust_struct_interface_derive(input: TokenStream) -> TokenStream {
                 }
 
                 quote! {
-                    fn get_attribute(&self, name: String, string_literals: &mut ManualHashMap<u64, String>, string_hasher: &mut DefaultHasher) -> Result<VinegarObject, VinegarError> {
+                    fn get_attribute(&self, name: &String, string_literals: &mut ManualHashMap<u64, String>, string_hasher: &mut DefaultHasher) -> Result<VinegarObject, VinegarError> {
                         #(#getters)*
-                        Err(VinegarError::AttributeNotFound(name))
+                        Err(VinegarError::AttributeNotFound(self.to_string(string_literals)?, name.clone()))
                     }
                 }
             }
@@ -62,9 +62,9 @@ pub fn vinegar_rust_struct_interface_derive(input: TokenStream) -> TokenStream {
                 }
 
                 quote! {
-                    fn set_attribute(&mut self, name: String, value: VinegarObject, string_literals: &ManualHashMap<u64, String>) -> Result<(), VinegarError> {
+                    fn set_attribute(&mut self, name: &String, value: VinegarObject, string_literals: &ManualHashMap<u64, String>) -> Result<(), VinegarError> {
                         #(#setters)*
-                        Err(VinegarError::AttributeNotFound(name))
+                        Err(VinegarError::AttributeNotFound(self.to_string(string_literals)?, name.clone()))
                     }
                 }
             }

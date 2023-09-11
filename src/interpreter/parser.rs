@@ -1,4 +1,4 @@
-use super::debug::{DebugInfo, FileInterpreterError, InterpreterError};
+use super::debug::{DebugInfo, FileOrOtherError, Error};
 use super::iter::{CanConcatenate, SingleItemIterator};
 use super::lexer::{DebugToken, Lexer, Token};
 use crate::file_handler;
@@ -16,14 +16,14 @@ macro_rules! expect_token {
             )*
             Some(t) => {
                 let token_str = t.simple_string();
-                return Err(InterpreterError::UnexpectedTokenError(
+                return Err(Error::UnexpectedTokenError(
                     $self.get_error_prefix(),
                     token_str,
                     $msg.to_string(),
                 ));
             }
             _ => {
-                return Err(InterpreterError::UnexpectedEndOfFileError(
+                return Err(Error::UnexpectedEndOfFileError(
                     $self.get_error_prefix(),
                     $msg.to_string(),
                 ));
@@ -39,7 +39,7 @@ macro_rules! expect_any_token {
                 Some($pattern) => $result,
             )*
             _ => {
-                return Err(InterpreterError::UnexpectedEndOfFileError(
+                return Err(Error::UnexpectedEndOfFileError(
                     $self.get_error_prefix(),
                     $msg.to_string(),
                 ));
@@ -122,41 +122,89 @@ impl BinaryOperator {
 
 #[derive(Debug)]
 pub struct FunctionCall {
-    pub var: VariableName,
+    pub expr: Expression,
     pub args: Vec<Expression>,
     pub kwargs: HashMap<String, Expression>,
 }
 
 #[derive(Debug, Clone)]
-pub enum VariableName {
+pub enum Indentifier {
     Final(String, Range<usize>),
-    MemberOf(String, Rc<VariableName>, Range<usize>),
-}
-
-impl VariableName {
-    pub fn debug_string(&self) -> String {
-        match self {
-            VariableName::MemberOf(name, member, _) => {
-                format!("{}.{}", name, member.debug_string())
-            }
-            VariableName::Final(name, _) => format!("{}", name),
-        }
-    }
-
-    pub fn char_range(&self) -> Range<usize> {
-        match self {
-            VariableName::MemberOf(_, _, range) => range.clone(),
-            VariableName::Final(_, range) => range.clone(),
-        }
-    }
+    Member(String, Rc<Expression>, Range<usize>),
 }
 
 #[derive(Debug, Clone)]
 pub enum Expression {
     Literal(Literal),
-    VariableName(VariableName),
+    Identifier(Indentifier),
     BinaryOperator(Rc<BinaryOperator>),
     FunctionCall(Rc<FunctionCall>),
+}
+
+pub trait DebugString {
+    fn debug_string(&self) -> String;
+}
+
+impl DebugString for Expression {
+    fn debug_string(&self) -> String {
+        match self {
+            Expression::Identifier(i) => i.debug_string(),
+            _ => format!("{:?}", self),
+        }
+    }
+}
+
+impl DebugString for Indentifier {
+    fn debug_string(&self) -> String {
+        match self {
+            Indentifier::Member(name, member, _) => {
+                format!("{}.{:?}", name, member)
+            }
+            Indentifier::Final(name, _) => format!("{}", name),
+        }
+    }
+}
+
+pub trait GetCharRange {
+    fn get_char_range(&self) -> Range<usize>;
+}
+
+impl GetCharRange for Expression {
+    fn get_char_range(&self) -> Range<usize> {
+        match self {
+            Expression::Identifier(i) => return i.get_char_range(),
+            Expression::Literal(l) => l.get_char_range(),
+            Expression::BinaryOperator(b) => b.get_char_range(),
+            Expression::FunctionCall(f) => f.get_char_range(),
+        }
+    }
+}
+
+impl GetCharRange for Indentifier {
+    fn get_char_range(&self) -> Range<usize> {
+        match self {
+            Indentifier::Final(_, range) => range.clone(),
+            Indentifier::Member(_, _, range) => range.clone(),
+        }
+    }
+}
+
+impl GetCharRange for Literal {
+    fn get_char_range(&self) -> Range<usize> {
+        1..0
+    }
+}
+
+impl GetCharRange for BinaryOperator {
+    fn get_char_range(&self) -> Range<usize> {
+        1..0
+    }
+}
+
+impl GetCharRange for FunctionCall {
+    fn get_char_range(&self) -> Range<usize> {
+        1..0
+    }
 }
 
 impl From<Literal> for Expression {
@@ -176,9 +224,9 @@ impl From<FunctionCall> for Expression {
     }
 }
 
-impl From<VariableName> for Expression {
-    fn from(value: VariableName) -> Self {
-        Expression::VariableName(value)
+impl From<Indentifier> for Expression {
+    fn from(value: Indentifier) -> Self {
+        Expression::Identifier(value)
     }
 }
 
@@ -257,7 +305,7 @@ impl Parser {
     pub fn parse_tokens(
         tokens: Vec<DebugToken>,
         debug_info: Option<DebugInfo>,
-    ) -> Result<CodeBody, InterpreterError> {
+    ) -> Result<CodeBody, Error> {
         let mut instance: Parser = Self {
             debug_info: match debug_info {
                 Some(d) => d,
@@ -274,16 +322,16 @@ impl Parser {
     pub fn parse_string(
         s: String,
         debug_info: Option<DebugInfo>,
-    ) -> Result<CodeBody, InterpreterError> {
+    ) -> Result<CodeBody, Error> {
         let tokens = Lexer::lex_string(s.to_string(), debug_info.clone())?;
-        let result: Result<CodeBody, InterpreterError> = Self::parse_tokens(tokens, debug_info);
+        let result: Result<CodeBody, Error> = Self::parse_tokens(tokens, debug_info);
         result
     }
 
-    pub fn parse_file(path: String) -> Result<CodeBody, FileInterpreterError> {
+    pub fn parse_file(path: String) -> Result<CodeBody, FileOrOtherError> {
         let file_content = match file_handler::get_file_contents(&path) {
             Ok(contents) => contents,
-            Err(err) => return Err(FileInterpreterError::IOError(err)),
+            Err(err) => return Err(FileOrOtherError::IOError(err)),
         };
         let tokens: Vec<DebugToken> = Lexer::lex_file(path.to_string())?;
         let result = match Self::parse_tokens(
@@ -291,16 +339,16 @@ impl Parser {
             Some(DebugInfo::new(Some(file_content), format!("\"{}\"", path))),
         ) {
             Ok(v) => Ok(v),
-            Err(err) => Err(FileInterpreterError::InterpreterError(err)),
+            Err(err) => Err(FileOrOtherError::OtherError(err)),
         };
         result
     }
 
-    pub fn get_tree(&mut self) -> Result<CodeBody, InterpreterError> {
+    pub fn get_tree(&mut self) -> Result<CodeBody, Error> {
         match self.peek_token() {
             Some(Token::NewLine(n)) => {
                 if n.indent != 0 {
-                    return Err(InterpreterError::UnexpectedIndentError(
+                    return Err(Error::UnexpectedIndentError(
                         self.get_error_prefix(),
                     ));
                 }
@@ -308,7 +356,7 @@ impl Parser {
             None => return Ok(CodeBody { statements: vec![] }),
             Some(t) => {
                 let token_str = t.simple_string();
-                return Err(InterpreterError::UnexpectedTokenError(
+                return Err(Error::UnexpectedTokenError(
                     self.get_error_prefix(),
                     token_str,
                     "the first token must be a newline token with 0 indent.".into(),
@@ -323,7 +371,7 @@ impl Parser {
         self.next_code_body(indent)
     }
 
-    fn next_code_body(&mut self, indent: usize) -> Result<CodeBody, InterpreterError> {
+    fn next_code_body(&mut self, indent: usize) -> Result<CodeBody, Error> {
         let mut statements = vec![];
 
         loop {
@@ -339,7 +387,7 @@ impl Parser {
                     };
                     if n.indent > indent {
                         self.move_n(2);
-                        return Err(InterpreterError::UnexpectedIndentError(
+                        return Err(Error::UnexpectedIndentError(
                             self.get_error_prefix(),
                         ));
                     };
@@ -347,7 +395,7 @@ impl Parser {
                 Some(t) => {
                     let token_str = t.simple_string();
                     self.move_n(1);
-                    return Err(InterpreterError::UnexpectedTokenError(
+                    return Err(Error::UnexpectedTokenError(
                         self.get_error_prefix(),
                         token_str,
                         "expected the beginning of a new line.".to_string(),
@@ -362,7 +410,7 @@ impl Parser {
         })
     }
 
-    fn next_statement(&mut self, indent: usize) -> Result<Option<Statement>, InterpreterError> {
+    fn next_statement(&mut self, indent: usize) -> Result<Option<Statement>, Error> {
         while let Some(Token::NewLine(_)) = self.peek_token() {
             self.next();
         }
@@ -406,7 +454,7 @@ impl Parser {
                     }
 
                     if next_indent <= indent {
-                        return Err(InterpreterError::ExpectedIndentError(
+                        return Err(Error::ExpectedIndentError(
                             self.get_error_prefix(),
                             "expected indented block for function declaration.".into(),
                         ));
@@ -420,7 +468,7 @@ impl Parser {
                     })));
                 }
                 self.next();
-                return Err(InterpreterError::MissingTokenError(
+                return Err(Error::MissingTokenError(
                     self.get_error_prefix(),
                     "expected function definition after keyword \"def\"".into(),
                 ));
@@ -437,20 +485,20 @@ impl Parser {
 
         return match self.next_expression(0)? {
             Some(expr) => Ok(Some(Statement::from(expr))),
-            _ => Err(InterpreterError::UnexpectedEndOfStatementError(
+            _ => Err(Error::UnexpectedEndOfStatementError(
                 self.get_error_prefix(),
                 "expected a statement.".into(),
             )),
         };
     }
 
-    fn next_assignment(&mut self, identifier: String) -> Result<Assignment, InterpreterError> {
+    fn next_assignment(&mut self, identifier: String) -> Result<Assignment, Error> {
         self.next();
         self.next();
         let expression = match self.next_expression(0)? {
             Some(e) => e,
             None => {
-                return Err(InterpreterError::ExpectedExpressionError(
+                return Err(Error::ExpectedExpressionError(
                     self.get_error_prefix(),
                 ))
             }
@@ -461,28 +509,38 @@ impl Parser {
         });
     }
 
-    fn next_expression(&mut self, min_prec: usize) -> Result<Option<Expression>, InterpreterError> {
+    fn next_expression(&mut self, min_prec: usize) -> Result<Option<Expression>, Error> {
         let mut a = match self.next_atomic_expression()? {
             Some(a) => a,
             None => return Ok(None),
         };
 
-        match self.peek_token() {
-            Some(Token::ParenClose) => {
-                if self.paren_depth > 0 {
-                    return Ok(Some(a));
-                } else {
-                    return Err(InterpreterError::UnexpectedTokenError(
-                        self.get_error_prefix(),
-                        Token::ParenClose.simple_string(),
-                        "".into(),
-                    ));
+        loop {
+            match self.peek_token() {
+                Some(Token::ParenOpen) => {
+                    if let Some(Token::ParenOpen) = self.peek_token() {
+                        a = self.next_function_call(a)?;
+                    }
                 }
-            }
-            Some(Token::NewLine(_)) => return Ok(Some(a)),
-            None => return Ok(Some(a)),
-            Some(_) => (),
-        };
+                Some(Token::Period) => {
+                    a = self.next_member(a)?;
+                }
+                Some(Token::ParenClose) => {
+                    if self.paren_depth > 0 {
+                        return Ok(Some(a));
+                    } else {
+                        return Err(Error::UnexpectedTokenError(
+                            self.get_error_prefix(),
+                            Token::ParenClose.simple_string(),
+                            "".into(),
+                        ));
+                    }
+                }
+                Some(Token::NewLine(_)) => return Ok(Some(a)),
+                None => return Ok(Some(a)),
+                Some(_) => break,
+            };
+        }
         // if the next token is a binary operator with a precedence higher or equal to min_prec, then:
         //     consume and save it
         //     continue by evaluating the next expression
@@ -504,7 +562,7 @@ impl Parser {
             a = match self.next_expression(op_prec + 1)? {
                 Some(b) => Expression::from(BinaryOperator::get_operator(&op_type, a, b)),
                 None => {
-                    return Err(InterpreterError::UnexpectedEndOfStatementError(
+                    return Err(Error::UnexpectedEndOfStatementError(
                         self.get_error_prefix(),
                         format!(
                             "expected expression after operator {}",
@@ -518,7 +576,74 @@ impl Parser {
         Ok(Some(a))
     }
 
-    fn next_atomic_expression(&mut self) -> Result<Option<Expression>, InterpreterError> {
+    fn next_function_call(&mut self, a: Expression) -> Result<Expression, Error> {
+        let mut all_args = vec![];
+        self.paren_depth += 1;
+        loop {
+            self.next();
+            expect_any_token!(self, self.peek_token(),
+                Token::ParenClose => break,
+                _ => ();
+                "expected expression or closing parentheses."
+            );
+            let expr = match self.next_expression(0)? {
+                Some(expr) => expr,
+                None => {
+                    return Err(Error::ExpectedExpressionError(
+                        self.get_error_prefix(),
+                    ))
+                }
+            };
+            all_args.push(expr);
+            expect_token!(self, self.peek_token(),
+                Token::Comma => {
+                    continue;
+                },
+                Token::ParenClose => break;
+                "expected comma or closing parentheses."
+            )
+        }
+        self.paren_depth -= 1;
+        self.next();
+        return Ok(Expression::from(FunctionCall {
+            expr: a,
+            args: all_args,
+            kwargs: HashMap::new(),
+        }));
+    }
+
+    fn next_member(&mut self, a: Expression) -> Result<Expression, Error> {
+        self.next();
+        let next = match self.peek() {
+            Some(t) => t,
+            None => {
+                return Err(Error::UnexpectedEndOfFileError(
+                    self.get_error_prefix(),
+                    "expected a member identifier.".into(),
+                ))
+            }
+        };
+        match &next.token {
+            Token::Word(w) => {
+                self.assert_not_literal(&w)?;
+                let name = w.to_string();
+                let range = next.char_range.clone();
+                self.next();
+                return Ok(Expression::Identifier(Indentifier::Member(
+                    name,
+                    Rc::new(a),
+                    range,
+                )));
+            }
+            _ => Err(Error::UnexpectedTokenError(
+                self.get_error_prefix(),
+                next.token.simple_string(),
+                "expected a member identifier.".into(),
+            )),
+        }
+    }
+
+    fn next_atomic_expression(&mut self) -> Result<Option<Expression>, Error> {
         match self.next_token() {
             Some(Token::Word(w)) => {
                 let word = w.to_string();
@@ -536,7 +661,7 @@ impl Parser {
                 rv
             }
             _ => {
-                return Err(InterpreterError::UnexpectedEndOfStatementError(
+                return Err(Error::UnexpectedEndOfStatementError(
                     self.get_error_prefix(),
                     "".into(),
                 ));
@@ -544,7 +669,7 @@ impl Parser {
         }
     }
 
-    fn next_word(&mut self, word: String) -> Result<Option<Expression>, InterpreterError> {
+    fn next_word(&mut self, word: String) -> Result<Option<Expression>, Error> {
         if let Ok(value) = word.parse() {
             if let Some(Token::Period) = self.peek_token() {
                 self.next();
@@ -554,7 +679,7 @@ impl Parser {
                     full_str.push_str(frac);
                     return match full_str.parse() {
                         Ok(value) => Ok(Some(Expression::from(Literal::Float(value)))),
-                        Err(_) => Err(InterpreterError::InvalidLiteralError(
+                        Err(_) => Err(Error::InvalidLiteralError(
                             self.get_error_prefix(),
                             full_str,
                             "expected this to be a float literal.".into(),
@@ -589,7 +714,7 @@ impl Parser {
                     None => (),
                 }
             };
-            return Err(InterpreterError::InvalidLiteralError(
+            return Err(Error::InvalidLiteralError(
                 self.get_error_prefix(),
                 word,
                 "expected float literal due to numeric followed by \"e\". example: 10e-3".into(),
@@ -604,7 +729,7 @@ impl Parser {
             if let Ok(value) = i64::from_str_radix(rest_word, LITERAL_PREFIXES[k]) {
                 return Ok(Some(Expression::from(Literal::Int(value))));
             }
-            return Err(InterpreterError::InvalidLiteralError(
+            return Err(Error::InvalidLiteralError(
                 self.get_error_prefix(),
                 format!("{:?}", word),
                 format!(
@@ -626,98 +751,65 @@ impl Parser {
                     }
                 }
             }
-            return Err(InterpreterError::InvalidLiteralError(
+            return Err(Error::InvalidLiteralError(
                 self.get_error_prefix(),
                 word,
                 "expected a base n and an int literal with base n after prefix \"base_\". example: \"base_3_2102\"".into()
             ));
         }
 
-        let prev_debug_token = self.prev().unwrap();
-        let prev_char_range = prev_debug_token.char_range.start..prev_debug_token.char_range.end;
-        let mut members = vec![(word, prev_char_range)];
+        // let prev_debug_token = self.prev().unwrap();
+        // let prev_char_range = prev_debug_token.char_range.start..prev_debug_token.char_range.end;
+        // let mut members = vec![(word, prev_char_range)];
 
-        while let Some(Token::Period) = self.peek_token() {
-            self.next();
-            let next_token = match self.next() {
-                Some(t) => t,
-                _ => continue,
-            };
-            match &next_token.token {
-                Token::Word(w) => members.push((
-                    w.to_string(),
-                    next_token.char_range.start..next_token.char_range.end,
-                )),
-                t => {
-                    let token_string = t.simple_string();
-                    return Err(InterpreterError::UnexpectedTokenError(
-                        self.get_error_prefix(),
-                        token_string,
-                        "expected member identifier.".into(),
-                    ));
-                }
-            }
-        }
+        // while let Some(Token::Period) = self.peek_token() {
+        //     self.next();
+        //     let next_token = match self.next() {
+        //         Some(t) => t,
+        //         _ => continue,
+        //     };
+        //     match &next_token.token {
+        //         Token::Word(w) => members.push((
+        //             w.to_string(),
+        //             next_token.char_range.start..next_token.char_range.end,
+        //         )),
+        //         t => {
+        //             let token_string = t.simple_string();
+        //             return Err(InterpreterError::UnexpectedTokenError(
+        //                 self.get_error_prefix(),
+        //                 token_string,
+        //                 "expected member identifier.".into(),
+        //             ));
+        //         }
+        //     }
+        // }
 
-        let last_identifier = members.pop().unwrap();
-        self.assert_not_literal(&last_identifier.0)?;
-        let mut variable = VariableName::Final(last_identifier.0.to_string(), last_identifier.1);
-        for (identifier, char_range) in members.iter().rev() {
-            self.assert_not_literal(identifier)?;
-            variable = VariableName::MemberOf(
-                identifier.to_string(),
-                Rc::new(variable),
-                char_range.start..char_range.end,
-            );
-        }
+        // let last_identifier = members.pop().unwrap();
+        // self.assert_not_literal(&last_identifier.0)?;
+        // let mut variable = Indentifier::Final(last_identifier.0.to_string(), last_identifier.1);
+        // for (identifier, char_range) in members.iter().rev() {
+        //     self.assert_not_literal(identifier)?;
+        //     variable = Indentifier::MemberOf(
+        //         identifier.to_string(),
+        //         Rc::new(variable),
+        //         char_range.start..char_range.end,
+        //     );
+        // }
 
-        // check if an open paren follows, if so, parse the contents.
-        if let Some(Token::ParenOpen) = self.peek_token() {
-            let mut all_args = vec![];
-            self.paren_depth += 1;
-            loop {
-                self.next();
-                expect_any_token!(self, self.peek_token(),
-                    Token::ParenClose => break,
-                    _ => ();
-                    "expected expression or closing parentheses."
-                );
-                let expr = match self.next_expression(0)? {
-                    Some(expr) => expr,
-                    None => {
-                        return Err(InterpreterError::ExpectedExpressionError(
-                            self.get_error_prefix(),
-                        ))
-                    }
-                };
-                all_args.push(expr);
-                expect_token!(self, self.peek_token(),
-                    Token::Comma => {
-                        continue;
-                    },
-                    Token::ParenClose => break;
-                    "expected comma or closing parentheses."
-                )
-            }
-            self.paren_depth -= 1;
-            self.next();
-            return Ok(Some(Expression::from(FunctionCall {
-                var: variable,
-                args: all_args,
-                kwargs: HashMap::new(),
-            })));
-        }
-        Ok(Some(Expression::from(variable)))
+        Ok(Some(Expression::from(Indentifier::Final(
+            word,
+            self.prev().unwrap().char_range.clone(),
+        ))))
     }
 
-    fn assert_not_literal(&self, identifier: &str) -> Result<(), InterpreterError> {
+    fn assert_not_literal(&self, identifier: &str) -> Result<(), Error> {
         if identifier
             .chars()
             .nth(0)
             .expect("zero-size identifier")
             .is_numeric()
         {
-            return Err(InterpreterError::UnexpectedLiteralError(
+            return Err(Error::UnexpectedLiteralError(
                 self.get_error_prefix(),
                 identifier.into(),
                 "a literal cannot be placed in member syntax (var.member). was this meant to be a float literal?".into()
@@ -728,7 +820,7 @@ impl Parser {
             .concat(SingleItemIterator::new(&"base_".to_string()))
         {
             if identifier.starts_with(prefix) {
-                return Err(InterpreterError::UnexpectedLiteralError(
+                return Err(Error::UnexpectedLiteralError(
                     self.get_error_prefix(),
                     identifier.into(),
                     format!("a literal cannot be placed in member syntax (var.member). tokens starting with {} are interpreted as numeric literals.", prefix)
