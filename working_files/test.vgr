@@ -9,11 +9,11 @@ def get_name(
  
 a = Duck("Tom", 39, 3.3)
 
-tom_greeting = get_name(a)
-print("My name is " + tom_greeting, "\n\n")
+# tom_greeting = get_name(a)
+# print("My name is " + tom_greeting, "\n\n")
 
-tom_greeting = get_name(message: "keyword", a)
-print("My name is " + tom_greeting, "\n\n")
+# tom_greeting = get_name(message: "keyword", a)
+# print("My name is " + tom_greeting, "\n\n")
 
-tom_greeting = get_name(a, "positional")
-print("My name is " + tom_greeting, "")
+# tom_greeting = get_name(a, "positional")
+# print("My name is " + tom_greeting, "")

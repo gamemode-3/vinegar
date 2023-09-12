@@ -9,7 +9,7 @@ use std::{
 use crate::file_handler;
 
 use super::debug::OrError;
-use super::parser::{DebugString, GetCharRange, ParserResult};
+use super::parser::{DebugString, GetCharRange, ParserResult, UnaryOperator, UnaryOperatorType};
 use super::string_literal_map::StringLiteralMap;
 use super::{
     debug::{DebugInfo, Error, FileOrOtherError, VinegarError},
@@ -197,6 +197,17 @@ impl VinegarObject {
                 VinegarObject::Float(other_f) => Ok(VinegarObject::Float(f / other_f)),
                 _ => other.sub(self),
             },
+            _ => Err(VinegarError::IncompatibleTypesError(format!(
+                "cannot perform arithemtic objects of type {}.",
+                self.type_name()
+            ))),
+        }
+    }
+
+    pub fn invert(&self) -> Result<Self, VinegarError> {
+        match self {
+            &VinegarObject::Int(i) => Ok(VinegarObject::Int(-i)),
+            &VinegarObject::Float(f) => Ok(VinegarObject::Float(-f)),
             _ => Err(VinegarError::IncompatibleTypesError(format!(
                 "cannot perform arithemtic objects of type {}.",
                 self.type_name()
@@ -559,6 +570,7 @@ impl VinegarRuntime {
 
     fn interpret_expression(&mut self, expression: &Expression) -> Result<VinegarObject, Error> {
         match expression {
+            Expression::UnaryOperator(un_op) => self.interpret_un_op(un_op),
             Expression::BinaryOperator(bin_op) => self.interpret_bin_op(bin_op),
             Expression::Literal(l) => self.interpret_literal(l),
             Expression::Identifier(v) => self.interpret_variable(v),
@@ -642,6 +654,21 @@ impl VinegarRuntime {
                     Err(err) => Err(Error::VinegarError(self.get_error_prefix(1..0), err)),
                 }
             }
+        }
+    }
+
+    fn interpret_un_op(&mut self, op: &Rc<UnaryOperator>) -> Result<VinegarObject, Error> {
+        match (&**op).op_type {
+            UnaryOperatorType::Invert => {
+                let value = self.interpret_expression(&op.expr)?;
+                Ok(value
+                    .invert()
+                    .or_error(self.get_error_prefix(op.get_char_range()))?)
+            }
+            _ => todo!(), // UnaryOperatorType::Not => {
+                          //     let value = self.interpret_expression(&op.expr)?;
+                          //     Ok(value.not()?)
+                          // }
         }
     }
 

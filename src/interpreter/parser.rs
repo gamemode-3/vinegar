@@ -69,6 +69,20 @@ macro_rules! expect_expression {
     };
 }
 
+macro_rules! expect_atomic_expression {
+    ($self:expr) => {
+        match $self.next_atomic_expression()? {
+            Some(e) => e,
+            None => {
+                return Err(Error::ParserError(
+                    $self.get_error_prefix(),
+                    ParserError::ExpectedExpressionError(),
+                ))
+            }
+        }
+    };
+}
+
 lazy_static! {
     static ref LITERAL_PREFIXES: HashMap<String, u32> = {
         let mut set = HashMap::new();
@@ -90,6 +104,24 @@ pub enum Literal {
     String(u64),
     Int(i64),
     Float(f64),
+}
+
+#[derive(Debug)]
+pub struct UnaryOperator {
+    pub op_type: UnaryOperatorType,
+    pub expr: Expression,
+}
+
+impl UnaryOperator {
+    pub fn new(op_type: UnaryOperatorType, expr: Expression) -> Self {
+        UnaryOperator { op_type, expr }
+    }
+}
+
+#[derive(Debug)]
+pub enum UnaryOperatorType {
+    Not,
+    Invert,
 }
 
 #[derive(Debug)]
@@ -157,6 +189,7 @@ pub enum Indentifier {
 pub enum Expression {
     Literal(Literal),
     Identifier(Indentifier),
+    UnaryOperator(Rc<UnaryOperator>),
     BinaryOperator(Rc<BinaryOperator>),
     FunctionCall(Rc<FunctionCall>),
 }
@@ -196,6 +229,7 @@ impl GetCharRange for Expression {
             Expression::Literal(l) => l.get_char_range(),
             Expression::BinaryOperator(b) => b.get_char_range(),
             Expression::FunctionCall(f) => f.get_char_range(),
+            Expression::UnaryOperator(u) => u.get_char_range(),
         }
     }
 }
@@ -210,6 +244,12 @@ impl GetCharRange for Indentifier {
 }
 
 impl GetCharRange for Literal {
+    fn get_char_range(&self) -> Range<usize> {
+        1..0
+    }
+}
+
+impl GetCharRange for UnaryOperator {
     fn get_char_range(&self) -> Range<usize> {
         1..0
     }
@@ -232,6 +272,13 @@ impl From<Literal> for Expression {
         Expression::Literal(value)
     }
 }
+
+impl From<UnaryOperator> for Expression {
+    fn from(value: UnaryOperator) -> Self {
+        Expression::UnaryOperator(Rc::new(value))
+    }
+}
+
 impl From<BinaryOperator> for Expression {
     fn from(value: BinaryOperator) -> Self {
         Expression::BinaryOperator(Rc::new(value))
@@ -775,6 +822,13 @@ impl Parser {
                 self.next();
                 rv
             }
+            Some(Token::Minus) => {
+                let expr = expect_atomic_expression!(self);
+                Ok(Some(Expression::from(UnaryOperator::new(
+                    UnaryOperatorType::Invert,
+                    expr,
+                ))))
+            }
             _ => {
                 return Err(Error::ParserError(
                     self.get_error_prefix(),
@@ -785,6 +839,14 @@ impl Parser {
     }
 
     fn next_word(&mut self, word: String) -> Result<Option<Expression>, Error> {
+        if word == "not" {
+            let expr = expect_atomic_expression!(self);
+            return Ok(Some(Expression::from(UnaryOperator::new(
+                UnaryOperatorType::Not,
+                expr,
+            ))));
+        }
+
         if let Ok(value) = word.parse() {
             if let Some(Token::Period) = self.peek_token() {
                 self.next();
