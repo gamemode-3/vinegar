@@ -116,9 +116,10 @@ impl Function {
 #[derive(Debug, Clone)]
 pub enum VinegarObject {
     None,
-    String(u64),
     Int(i64),
+    Bool(bool),
     Float(f64),
+    String(u64),
     Function(Function),
     List(Vec<VinegarObject>),
     RustStructWrapper(RustStructWrapper),
@@ -206,6 +207,26 @@ impl VinegarObject {
         }
     }
 
+    pub fn and(
+        &self,
+        other: &Self,
+        string_literals: &StringLiteralMap,
+    ) -> Result<Self, VinegarError> {
+        Ok(VinegarObject::Bool(
+            self.as_bool(string_literals)? && other.as_bool(string_literals)?,
+        ))
+    }
+
+    pub fn or(
+        &self,
+        other: &Self,
+        string_literals: &StringLiteralMap,
+    ) -> Result<Self, VinegarError> {
+        Ok(VinegarObject::Bool(
+            self.as_bool(string_literals)? || other.as_bool(string_literals)?,
+        ))
+    }
+
     pub fn invert(&self) -> Result<Self, VinegarError> {
         match self {
             &VinegarObject::Int(i) => Ok(VinegarObject::Int(-i)),
@@ -217,10 +238,15 @@ impl VinegarObject {
         }
     }
 
+    pub fn not(&self, string_literals: &StringLiteralMap) -> Result<Self, VinegarError> {
+        Ok(VinegarObject::Bool(!self.as_bool(string_literals)?))
+    }
+
     pub fn type_name(&self) -> &str {
         match self {
             VinegarObject::None => "None",
             VinegarObject::Int(_) => "Int",
+            VinegarObject::Bool(_) => "Bool",
             VinegarObject::Float(_) => "Float",
             VinegarObject::String(_) => "String",
             VinegarObject::Function(..) => "Function",
@@ -233,11 +259,12 @@ impl VinegarObject {
         match self {
             VinegarObject::None => 0,
             VinegarObject::Int(_) => 1,
-            VinegarObject::Float(_) => 2,
-            VinegarObject::String(_) => 3,
-            VinegarObject::Function(..) => 4,
-            VinegarObject::List(..) => 5,
-            VinegarObject::RustStructWrapper(..) => 6,
+            VinegarObject::Bool(_) => 2,
+            VinegarObject::Float(_) => 3,
+            VinegarObject::String(_) => 4,
+            VinegarObject::Function(..) => 5,
+            VinegarObject::List(..) => 6,
+            VinegarObject::RustStructWrapper(..) => 7,
         }
     }
 
@@ -249,6 +276,19 @@ impl VinegarObject {
             VinegarObject::String(s) => Ok(string_literals.get(s).unwrap()),
             _ => Err(VinegarError::TypeError(format!(
                 "cannot represent {} as Rust String",
+                self.type_name()
+            ))),
+        }
+    }
+
+    pub fn as_bool(&self, string_literals: &StringLiteralMap) -> Result<bool, VinegarError> {
+        match self {
+            &VinegarObject::Bool(b) => Ok(b),
+            &VinegarObject::Int(i) => Ok(i != 0),
+            &VinegarObject::Float(f) => Ok(f != 0.0),
+            &VinegarObject::String(s) => Ok(string_literals.get(&s).unwrap() != ""),
+            _ => Err(VinegarError::TypeError(format!(
+                "cannot represent {} as Rust bool",
                 self.type_name()
             ))),
         }
@@ -343,6 +383,7 @@ impl VinegarObject {
             VinegarObject::Int(i) => format!("{}", i),
             VinegarObject::Float(f) => format!("{}", f),
             VinegarObject::String(h) => format!("{}", string_literals.get_lit(h)),
+            VinegarObject::Bool(b) => format!("{}", b),
             VinegarObject::List(l) => {
                 let mut object_strings: Vec<String> = Vec::new();
                 for o in l {
@@ -619,6 +660,7 @@ impl VinegarRuntime {
             &Literal::Int(i) => Ok(VinegarObject::Int(i)),
             &Literal::Float(f) => Ok(VinegarObject::Float(f)),
             &Literal::String(s) => Ok(VinegarObject::String(s)),
+            &Literal::Bool(b) => Ok(VinegarObject::Bool(b)),
         }
     }
 
@@ -642,21 +684,27 @@ impl VinegarRuntime {
             BinaryOperatorType::Div => value_left
                 .div(&value_right)
                 .or_error(self.get_error_prefix(op.get_char_range())),
+            BinaryOperatorType::And => value_left
+                .and(&value_right, &self.string_literals)
+                .or_error(self.get_error_prefix(op.get_char_range())),
+            BinaryOperatorType::Or => value_left
+                .or(&value_right, &self.string_literals)
+                .or_error(self.get_error_prefix(op.get_char_range())),
         }
     }
 
     fn interpret_un_op(&mut self, op: &Rc<UnaryOperator>) -> Result<VinegarObject, Error> {
         let value = self.interpret_expression(&op.expr)?;
         match (&**op).op_type {
-            UnaryOperatorType::Invert => {
+            UnaryOperatorType::Invert => Ok(value
+                .invert()
+                .or_error(self.get_error_prefix(op.get_char_range()))?),
+            UnaryOperatorType::Not => {
+                let value = self.interpret_expression(&op.expr)?;
                 Ok(value
-                    .invert()
+                    .not(&self.string_literals)
                     .or_error(self.get_error_prefix(op.get_char_range()))?)
             }
-            _ => todo!(), // UnaryOperatorType::Not => {
-                          //     let value = self.interpret_expression(&op.expr)?;
-                          //     Ok(value.not()?)
-                          // }
         }
     }
 

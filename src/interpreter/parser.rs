@@ -104,6 +104,7 @@ pub enum Literal {
     String(u64),
     Int(i64),
     Float(f64),
+    Bool(bool),
 }
 
 #[derive(Debug)]
@@ -147,15 +148,19 @@ pub enum BinaryOperatorType {
     Sub,
     Mul,
     Div,
+    And,
+    Or,
 }
 
 impl BinaryOperator {
     pub fn get_precedence(token: &BinaryOperatorType) -> usize {
         match token {
-            BinaryOperatorType::Add => 1,
-            BinaryOperatorType::Sub => 1,
-            BinaryOperatorType::Mul => 2,
-            BinaryOperatorType::Div => 2,
+            BinaryOperatorType::Or => 0,
+            BinaryOperatorType::And => 1,
+            BinaryOperatorType::Add => 2,
+            BinaryOperatorType::Sub => 2,
+            BinaryOperatorType::Mul => 3,
+            BinaryOperatorType::Div => 3,
         }
     }
 
@@ -165,6 +170,13 @@ impl BinaryOperator {
             Token::Minus => Some(BinaryOperatorType::Sub),
             Token::Star => Some(BinaryOperatorType::Mul),
             Token::Slash => Some(BinaryOperatorType::Div),
+            Token::Word(w) => {
+                match w.as_str() {
+                    "and" => Some(BinaryOperatorType::And),
+                    "or" => Some(BinaryOperatorType::Or),
+                    _ => None
+                }
+            },
             _ => None,
         }
     }
@@ -842,6 +854,13 @@ impl Parser {
                 UnaryOperatorType::Not,
                 expr,
             ))));
+        }
+
+        if word == "true" {
+            return Ok(Some(Expression::from(Literal::Bool(true))));
+        }
+        if word == "false" {
+            return Ok(Some(Expression::from(Literal::Bool(false))));
         }
 
         if let Ok(value) = word.parse() {
