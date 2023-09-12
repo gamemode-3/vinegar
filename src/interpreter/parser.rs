@@ -55,6 +55,20 @@ macro_rules! expect_any_token {
     };
 }
 
+macro_rules! expect_expression {
+    ($self:expr) => {
+        match $self.next_expression(0)? {
+            Some(e) => e,
+            None => {
+                return Err(Error::ParserError(
+                    $self.get_error_prefix(),
+                    ParserError::ExpectedExpressionError(),
+                ))
+            }
+        }
+    };
+}
+
 lazy_static! {
     static ref LITERAL_PREFIXES: HashMap<String, u32> = {
         let mut set = HashMap::new();
@@ -130,8 +144,7 @@ impl BinaryOperator {
 #[derive(Debug)]
 pub struct FunctionCall {
     pub expr: Expression,
-    pub args: Vec<Expression>,
-    pub kwargs: HashMap<String, Expression>,
+    pub args: Vec<(Option<String>, Expression)>,
 }
 
 #[derive(Debug, Clone)]
@@ -245,9 +258,15 @@ pub struct Assignment {
 }
 
 #[derive(Debug, Clone)]
+pub struct FunctionDefinitionArg {
+    pub name: String,
+    pub default: Option<Expression>,
+}
+
+#[derive(Debug, Clone)]
 pub struct FunctionDefinition {
     pub name: String,
-    pub args: Vec<String>,
+    pub args: Vec<FunctionDefinitionArg>,
     pub body: CodeBody,
 }
 
@@ -326,7 +345,11 @@ impl Debug for ParserResult {
                 if let Some(number_match) = caps.get(1) {
                     if let Ok(number) = number_match.as_str().parse::<u64>() {
                         if let Some(value) = self.string_literals.get(&number) {
-                            return format!("Literal(String(<\"{}\"> {}))", value.escape_default(), number);
+                            return format!(
+                                "Literal(String(<\"{}\"> {}))",
+                                value.escape_default(),
+                                number
+                            );
                         }
                     }
                 }
@@ -495,17 +518,32 @@ impl Parser {
             (self.peek_n_token(1), self.peek_n_token(2))
         {
             let name = name.to_string();
-            self.move_n(3);
+            self.move_n(2);
+            self.paren_depth += 1;
+            self.next();
 
             let mut args = vec![];
 
             loop {
-                let ident = match self.peek_token() {
+                let identifier = match self.peek_token() {
                     Some(Token::Word(w)) => w,
                     _ => break,
-                };
-                args.push(ident.clone());
+                }.clone();
                 self.next();
+                match self.peek_token() {
+                    Some(Token::Colon) => {
+                        self.next();
+                        let expr = expect_expression!(self);
+                        args.push(FunctionDefinitionArg {
+                            name: identifier,
+                            default: Some(expr),
+                        });
+                    }
+                    _ => args.push(FunctionDefinitionArg {
+                        name: identifier.clone(),
+                        default: None,
+                    }),
+                };
                 match self.peek_token() {
                     Some(Token::Comma) => {
                         self.next();
@@ -518,6 +556,7 @@ impl Parser {
                 Token::ParenClose => ();
                 "expected closing parenthesis."
             );
+            self.paren_depth -= 1;
 
             expect_token!(
                 self, self.next_token(),
@@ -565,15 +604,7 @@ impl Parser {
     fn next_assignment(&mut self, identifier: String) -> Result<Assignment, Error> {
         self.next();
         self.next();
-        let expression = match self.next_expression(0)? {
-            Some(e) => e,
-            None => {
-                return Err(Error::ParserError(
-                    self.get_error_prefix(),
-                    ParserError::ExpectedExpressionError(),
-                ))
-            }
-        };
+        let expression = expect_expression!(self);
         return Ok(Assignment {
             name: identifier,
             value: expression,
@@ -659,16 +690,20 @@ impl Parser {
                 _ => ();
                 "expected expression or closing parentheses."
             );
-            let expr = match self.next_expression(0)? {
-                Some(expr) => expr,
-                None => {
-                    return Err(Error::ParserError(
-                        self.get_error_prefix(),
-                        ParserError::ExpectedExpressionError(),
-                    ))
+
+            match self.peek_n_token(1) {
+                Some(Token::Colon) => {
+                    let name = expect_token!(
+                        self, self.next_token(),
+                        Token::Word(w) => w;
+                        "expected keyword argument name before colon"
+                    ).clone();
+                    self.next();
+                    let expr = expect_expression!(self);
+                    all_args.push((Some(name), expr));
                 }
+                _ => all_args.push((None, expect_expression!(self)))
             };
-            all_args.push(expr);
             expect_token!(self, self.peek_token(),
                 Token::Comma => {
                     continue;
@@ -682,7 +717,6 @@ impl Parser {
         return Ok(Expression::from(FunctionCall {
             expr: a,
             args: all_args,
-            kwargs: HashMap::new(),
         }));
     }
 

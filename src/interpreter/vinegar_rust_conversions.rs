@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     debug::VinegarError,
-    runtime::{VinegarObject, VinegarObjectConversion},
+    runtime::{VinegarObject, VinegarObjectConversion, Function},
     string_literal_map::ManualHashMap,
 };
 
@@ -82,6 +82,12 @@ impl From<usize> for VinegarObject {
 impl From<f64> for VinegarObject {
     fn from(value: f64) -> Self {
         VinegarObject::Float(value)
+    }
+}
+
+impl From<Function> for VinegarObject {
+    fn from(value: Function) -> Self {
+        VinegarObject::Function(value)
     }
 }
 

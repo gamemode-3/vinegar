@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::sync::{Arc, Mutex};
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
@@ -7,6 +8,7 @@ use std::{
 
 use crate::file_handler;
 
+use super::debug::OrError;
 use super::parser::{DebugString, GetCharRange, ParserResult};
 use super::{
     debug::{DebugInfo, Error, FileOrOtherError, VinegarError},
@@ -59,12 +61,59 @@ impl std::fmt::Debug for FunctionBody {
 }
 
 #[derive(Debug, Clone)]
+pub struct FunctionArg {
+    pub name: String,
+    pub value: Option<VinegarObject>,
+}
+
+impl FunctionArg {
+    pub fn new(name: String, value: Option<VinegarObject>) -> Self {
+        FunctionArg { name, value }
+    }
+}
+
+impl Ord for FunctionArg {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.name.cmp(&other.name)
+    }
+}
+
+impl PartialOrd for FunctionArg {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for FunctionArg {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for FunctionArg {}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub args: Vec<FunctionArg>,
+    pub body: FunctionBody,
+}
+
+impl Function {
+    pub fn new(args: Vec<FunctionArg>, body: FunctionBody) -> Self {
+        Self {
+            args: args,
+            body: body,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum VinegarObject {
     None,
     String(u64),
     Int(i64),
     Float(f64),
-    Function(Vec<String>, FunctionBody),
+    Function(Function),
     List(Vec<VinegarObject>),
     RustStructWrapper(RustStructWrapper),
 }
@@ -284,13 +333,32 @@ impl VinegarObject {
                 }
                 format!("{}", object_strings.join(" | "))
             }
-            VinegarObject::Function(args, body) => format!(
+            VinegarObject::Function(f) => format!(
                 "{}({})",
-                match body {
+                match f.body {
                     FunctionBody::VinegarBody(..) => "vinegar_function",
                     FunctionBody::RustWrapper(..) => "rust_function_wrapper",
                 },
-                args.join(", ")
+                {
+                    let mut rv = "".to_string();
+                    let mut args_iter = f.args.iter().peekable();
+                    loop {
+                        let a = match args_iter.next() {
+                            Some(a) => {
+                                rv.push_str(", ");
+                                a
+                            }
+                            None => break,
+                        };
+                        let arg_str = if let Some(dv) = &a.value {
+                            format!("{}: {}", a.name, dv.format_string(string_literals)?)
+                        } else {
+                            format!("{}", a.name)
+                        };
+                        rv.push_str(&arg_str);
+                    }
+                    rv
+                }
             ),
             VinegarObject::RustStructWrapper(w) => {
                 format!(
@@ -327,7 +395,7 @@ impl VinegarObject {
             _ => Err(VinegarError::AttributeNotFound(
                 self.format_string(string_literals)?,
                 name.clone(),
-            )), // TODO
+            )),
         }
     }
 }
@@ -452,12 +520,12 @@ impl VinegarRuntime {
 
     fn interpret(&mut self, tree_root: CodeBody) -> Result<VinegarObject, Error> {
         self.import_library::<vinegar_std::StandardLibrary>();
-        self.interpret_code_body(tree_root)
+        self.interpret_code_body(&tree_root)
     }
 
-    fn interpret_code_body(&mut self, code_body: CodeBody) -> Result<VinegarObject, Error> {
+    fn interpret_code_body(&mut self, code_body: &CodeBody) -> Result<VinegarObject, Error> {
         let mut last_result = VinegarObject::None;
-        for statement in code_body.statements {
+        for statement in &code_body.statements {
             last_result = match statement {
                 Statement::Assignment(a) => {
                     self.interpret_assignment(&a)?;
@@ -578,33 +646,65 @@ impl VinegarRuntime {
 
     fn interpret_function_call(&mut self, f: &Rc<FunctionCall>) -> Result<VinegarObject, Error> {
         let func = self.interpret_expression(&f.expr)?;
-        match func {
-            VinegarObject::Function(expected_args, body) => {
-                let given_args_len = f.args.len();
-                let expected_args_len = expected_args.len();
-                if given_args_len != expected_args_len {
-                    return Err(Error::VinegarError(
-                        self.get_error_prefix(f.expr.get_char_range()),
-                        VinegarError::InvalidArgumentsError(format!(
-                            "function \"{}\" takes {} {}, but {} {} provided.",
-                            f.expr.debug_string(),
-                            expected_args_len,
-                            match expected_args_len {
-                                1 => "argument".to_string(),
-                                _ => "arguments".to_string(),
-                            },
-                            given_args_len,
-                            match given_args_len {
-                                1 => "was".to_string(),
-                                _ => "were".to_string(),
-                            },
-                        )),
-                    ));
+        match &func {
+            VinegarObject::Function(function) => {
+                let mut expected_args = function.args.clone();
+                let body = &function.body;
+                let mut function_scope = VinegarScope::new();
+
+                for (name_option, value) in &f.args {
+                    let name_index = match name_option {
+                        Some(name) => {
+                            let comparator = |key: &String, item: &FunctionArg| key.cmp(&item.name);
+                            match expected_args.binary_search_by(|item| comparator(name, item)) {
+                                Ok(index) => Ok(index),
+                                Err(_) => Err(VinegarError::InvalidArgumentsError(format!(
+                                    "invalid keyword argument for function {}: {}",
+                                    func.format_string(&self.string_literals)
+                                        .or_error(self.get_error_prefix(1..0))?,
+                                    name
+                                ))),
+                            }
+                        }
+                        None => {
+                            let expected_args_len = function.args.len();
+                            if expected_args_len > 0 {
+                                Ok(0)
+                            } else {
+                                let given_args_len = f.args.len();
+                                Err(VinegarError::InvalidArgumentsError(format!(
+                                    "\"{}\" takes {} {}, but {} {} provided.",
+                                    f.expr.debug_string(),
+                                    expected_args_len,
+                                    match expected_args_len {
+                                        1 => "argument".to_string(),
+                                        _ => "arguments".to_string(),
+                                    },
+                                    given_args_len,
+                                    match given_args_len {
+                                        1 => "was".to_string(),
+                                        _ => "were".to_string(),
+                                    },
+                                )))
+                            }
+                        }
+                    }
+                    .or_error(self.get_error_prefix(1..0))?;
+
+                    let owned_arg = expected_args.remove(name_index);
+                    function_scope.insert(owned_arg.name, self.interpret_expression(value)?);
                 }
 
-                let mut function_scope = VinegarScope::new();
-                for (arg, name) in (&f.args).iter().zip(expected_args) {
-                    function_scope.insert(name, self.interpret_expression(&arg)?);
+                for arg in expected_args {
+                    if let Some(v) = arg.value {
+                        function_scope.insert(arg.name, v);
+                    } else {
+                        return Err(VinegarError::InvalidArgumentsError(format!(
+                            "too few arguments for {}",
+                            f.expr.debug_string()
+                        )))
+                        .or_error(self.get_error_prefix(f.get_char_range()));
+                    }
                 }
 
                 self.local_stack.push(function_scope);
@@ -637,11 +737,23 @@ impl VinegarRuntime {
         }
     }
 
-    fn interpret_function_definition(&mut self, func: FunctionDefinition) -> Result<(), Error> {
+    fn interpret_function_definition(&mut self, func: &FunctionDefinition) -> Result<(), Error> {
         let name = &func.name;
+        let mut args = vec![];
+        for a in &func.args {
+            args.push(FunctionArg {
+                name: a.name.clone(),
+                value: match &a.default {
+                    Some(dv) => Some(self.interpret_expression(dv)?),
+                    None => None,
+                },
+            })
+        }
 
-        let value: VinegarObject =
-            VinegarObject::Function(func.args, FunctionBody::VinegarBody(func.body));
+        let value: VinegarObject = VinegarObject::Function(Function::new(
+            args,
+            FunctionBody::VinegarBody(func.body.clone()),
+        ));
         let local_scope = self.local_stack.last_mut().unwrap();
         match local_scope.get_mut(name) {
             Some(v) => {

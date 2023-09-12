@@ -204,7 +204,7 @@ pub fn vinegar_constructor_derive(input: TokenStream) -> TokenStream {
                 for field in fields {
                     let field_name = field.ident.as_ref().unwrap();
                     arguments.push(quote! {
-                        stringify!(#field_name).to_string(),
+                        FunctionArg::new(stringify!(#field_name).to_string(), None),
                     });
                 }
 
@@ -212,11 +212,13 @@ pub fn vinegar_constructor_derive(input: TokenStream) -> TokenStream {
                     fn import_vinegar_constructor(scope: &mut VinegarScope) {
                         scope.insert(
                             stringify!(#struct_name).to_string(),
-                            VinegarObject::Function(
-                                vec![#(#arguments)*],
-                                FunctionBody::RustWrapper(RustFunctionWrapper {
-                                    runner: &Duck::new_vinegar,
-                                }),
+                            VinegarObject::from(
+                                Function::new(
+                                    vec![#(#arguments)*],
+                                    FunctionBody::RustWrapper(RustFunctionWrapper {
+                                        runner: &Duck::new_vinegar,
+                                    }),
+                                )
                             ),
                         );
                     }

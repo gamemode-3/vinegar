@@ -78,6 +78,19 @@ pub enum VinegarError {
     UnknownIdentifier(String),
 }
 
+pub trait OrError<T> {
+    fn or_error(self, s: String) -> Result<T, Error>;
+}
+
+impl<T> OrError<T> for Result<T, VinegarError> {
+    fn or_error(self, s: String) -> Result<T, Error> {
+        match self {
+            Ok(v) => Ok(v),
+            Err(err) => Err(Error::VinegarError(s, err)),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum FileOrOtherError {
     #[error("{0}")]

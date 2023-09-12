@@ -1,10 +1,21 @@
-def get_name(a, b):
-    print(b, "\n")
-    a.name
+def get_name(
+    object, message: "retrieving name"
+):
+    print(message, "\n")
+    object.name
 
 
 
  
 a = Duck("Tom", 39, 3.3)
 
-print("My name is " + get_name(a, ""), "\n")
+print(
+    "My name is " + get_name(
+        message: "", a
+    ), 
+    "\n\n"
+)
+
+print(
+    "My name is " + get_name(a), "\n"
+)

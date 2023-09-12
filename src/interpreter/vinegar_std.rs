@@ -1,7 +1,7 @@
 use super::{
     debug::VinegarError,
     runtime::{
-        FunctionBody, Library, RustFunctionWrapper, RustStructInterface,
+        Function, FunctionArg, FunctionBody, Library, RustFunctionWrapper, RustStructInterface,
         VinegarConstructor, VinegarObject, VinegarObjectConversion, VinegarScope,
     },
     string_literal_map::ManualHashMap,
@@ -32,28 +32,7 @@ struct Duck {
     quack_volume: f64,
 }
 
-fn _vinegar_rep(string_literals: &ManualHashMap<u64, String>, object: &VinegarObject) -> String {
-    match object {
-        VinegarObject::None => todo!(),
-        VinegarObject::Int(i) => format!("{:?}", i),
-        VinegarObject::Float(f) => format!("{:?}", f),
-        VinegarObject::String(s) => format!("{:?}", string_literals[s]),
-        VinegarObject::List(l) => {
-            let object_strings: Vec<String> =
-                l.iter().map(|o| _vinegar_rep(string_literals, o)).collect();
-            format!("| {} |", object_strings.join(" | "))
-        }
-        VinegarObject::Function(args, body) => format!(
-            "{}({})",
-            match body {
-                FunctionBody::VinegarBody(..) => "vinegar_function",
-                FunctionBody::RustWrapper(..) => "rust_function_wrapper",
-            },
-            args.join(", ")
-        ),
-        VinegarObject::RustStructWrapper(..) => "<RustStructWrapper>".into(),
-    }
-}
+
 
 pub struct StandardLibrary {}
 
@@ -62,12 +41,15 @@ impl Library for StandardLibrary {
         let mut scope = HashMap::new();
         scope.insert(
             "print".to_string(),
-            VinegarObject::Function(
-                vec!["value".to_string(), "endswith".to_string()],
+            VinegarObject::from(Function::new(
+                vec![
+                    FunctionArg::new("value".to_string(), None),
+                    FunctionArg::new("endswith".to_string(), None),
+                ],
                 FunctionBody::RustWrapper(RustFunctionWrapper {
                     runner: &vinegar_print,
                 }),
-            ),
+            )),
         );
 
         Duck::import_vinegar_constructor(&mut scope);
