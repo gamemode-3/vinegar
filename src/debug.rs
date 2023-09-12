@@ -2,6 +2,7 @@ use crate::interpreter::lexer::DebugToken;
 use lazy_static::lazy_static;
 use std::collections::HashSet;
 
+
 pub fn format_token_vec_simplified(tokens: &Vec<DebugToken>) -> String {
     let mut rv = "[".to_string();
     for t in tokens {

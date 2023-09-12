@@ -1,9 +1,10 @@
 use super::{
     debug::VinegarError,
-    interpreter::{
-        FunctionBody, Library, ManualHashMap, RustFunctionWrapper, RustStructInterface,
+    runtime::{
+        FunctionBody, Library, RustFunctionWrapper, RustStructInterface,
         VinegarConstructor, VinegarObject, VinegarObjectConversion, VinegarScope,
     },
+    string_literal_map::ManualHashMap,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -57,7 +58,7 @@ fn _vinegar_rep(string_literals: &ManualHashMap<u64, String>, object: &VinegarOb
 pub struct StandardLibrary {}
 
 impl Library for StandardLibrary {
-    fn get_globals() -> HashMap<String, super::interpreter::VinegarObject> {
+    fn get_globals() -> HashMap<String, super::runtime::VinegarObject> {
         let mut scope = HashMap::new();
         scope.insert(
             "print".to_string(),

@@ -1,9 +1,13 @@
 use super::debug::{DebugInfo, Error, FileOrOtherError, ParserError};
 use super::iter::{CanConcatenate, SingleItemIterator};
 use super::lexer::{DebugToken, Lexer, Token};
+use super::string_literal_map::{ManualHashMap, StringLiteralMap};
 use crate::file_handler;
 use lazy_static::lazy_static;
+use regex::Regex;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::ops::Range;
 use std::rc::Rc;
 use std::vec;
@@ -69,7 +73,7 @@ pub struct CodeBody {
 
 #[derive(Debug, Clone)]
 pub enum Literal {
-    String(String),
+    String(u64),
     Int(i64),
     Float(f64),
 }
@@ -300,35 +304,71 @@ impl CanBeInt for f64 {
 pub struct Parser {
     debug_info: DebugInfo,
     tokens: Vec<DebugToken>,
+    string_literals: ManualHashMap<u64, String>,
+    string_hasher: DefaultHasher,
     pointer: usize,
     paren_depth: usize,
+}
+
+pub struct ParserResult {
+    pub tree_root: CodeBody,
+    pub string_literals: ManualHashMap<u64, String>,
+    pub string_hasher: DefaultHasher,
+}
+
+impl Debug for ParserResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let tree_string = format!("{:?}", self.tree_root);
+        let pattern = r#"Literal\(String\((\d+)\)\)"#;
+        let re = Regex::new(pattern).unwrap();
+        let result = re
+            .replace_all(&tree_string, |caps: &regex::Captures| {
+                if let Some(number_match) = caps.get(1) {
+                    if let Ok(number) = number_match.as_str().parse::<u64>() {
+                        if let Some(value) = self.string_literals.get(&number) {
+                            return format!("Literal(String(<\"{}\"> {}))", value.escape_default(), number);
+                        }
+                    }
+                }
+                // If no replacement found, return the original capture
+                caps[0].to_string()
+            })
+            .to_string();
+        write!(f, "{}", result)
+    }
 }
 
 impl Parser {
     pub fn parse_tokens(
         tokens: Vec<DebugToken>,
         debug_info: Option<DebugInfo>,
-    ) -> Result<CodeBody, Error> {
+    ) -> Result<ParserResult, Error> {
         let mut instance: Parser = Self {
             debug_info: match debug_info {
                 Some(d) => d,
                 None => DebugInfo::new(None, "(unknown source)".to_string()),
             },
             tokens: tokens,
+            string_literals: HashMap::default(),
+            string_hasher: DefaultHasher::new(),
             pointer: 0,
             paren_depth: 0,
         };
-        instance.get_tree()
+        Ok(ParserResult {
+            tree_root: instance.get_tree()?,
+            string_literals: instance.string_literals,
+            string_hasher: instance.string_hasher,
+        })
     }
 
     #[allow(dead_code)]
-    pub fn parse_string(s: String, debug_info: Option<DebugInfo>) -> Result<CodeBody, Error> {
+    pub fn parse_string(s: String, debug_info: Option<DebugInfo>) -> Result<ParserResult, Error> {
         let tokens = Lexer::lex_string(s.to_string(), debug_info.clone())?;
-        let result: Result<CodeBody, Error> = Self::parse_tokens(tokens, debug_info);
+        let result = Self::parse_tokens(tokens, debug_info);
         result
     }
 
-    pub fn parse_file(path: String) -> Result<CodeBody, FileOrOtherError> {
+    pub fn parse_file(path: String) -> Result<ParserResult, FileOrOtherError> {
         let file_content = match file_handler::get_file_contents(&path) {
             Ok(contents) => contents,
             Err(err) => return Err(FileOrOtherError::IOError(err)),
@@ -687,7 +727,10 @@ impl Parser {
             }
             Some(Token::StringLiteral(w)) => {
                 let string = w.to_string();
-                Ok(Some(Expression::from(Literal::String(string))))
+                let hash = self
+                    .string_literals
+                    .add_lit(string, &mut self.string_hasher);
+                Ok(Some(Expression::from(Literal::String(hash))))
             }
             Some(Token::ParenOpen) => {
                 self.paren_depth += 1;

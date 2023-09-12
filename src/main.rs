@@ -4,7 +4,7 @@ mod interpreter;
 use interpreter::lexer::Lexer;
 use interpreter::parser::Parser;
 
-use crate::interpreter::interpreter::Interpreter;
+use crate::interpreter::runtime::VinegarRuntime;
 
 fn main() {
     let path = "./working_files/test.vgr";
@@ -23,7 +23,7 @@ fn main() {
 
     println!("{}", output);
 
-    match Interpreter::interpret_file(path.into()) {
+    match VinegarRuntime::interpret_file(path.into()) {
         Ok(_) => (),
         Err(e) => println!("{}", e),
     };

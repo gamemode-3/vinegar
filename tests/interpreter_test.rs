@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use vinegar::interpreter::interpreter::Interpreter;
+    use vinegar::interpreter::runtime::VinegarRuntime;
 
     #[test]
     fn test_on_file() {
@@ -8,7 +8,7 @@ mod tests {
 
         println!("\n\n");
 
-        match Interpreter::interpret_file(path.into()) {
+        match VinegarRuntime::interpret_file(path.into()) {
             Ok(_) => (),
             Err(e) => println!("{}", e),
         };

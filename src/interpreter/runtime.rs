@@ -1,14 +1,13 @@
 use std::sync::{Arc, Mutex};
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
-    hash::{BuildHasherDefault, Hash, Hasher},
     ops::Range,
     rc::Rc,
 };
 
 use crate::file_handler;
 
-use super::parser::{DebugString, GetCharRange};
+use super::parser::{DebugString, GetCharRange, ParserResult};
 use super::{
     debug::{DebugInfo, Error, FileOrOtherError, VinegarError},
     lexer::Lexer,
@@ -16,29 +15,9 @@ use super::{
         Assignment, BinaryOperator, CodeBody, Expression, FunctionCall, FunctionDefinition,
         Indentifier, Literal, Parser, Statement,
     },
+    string_literal_map::{ManualHashMap, StringLiteralMap},
     vinegar_std,
 };
-
-#[derive(Clone, Debug)]
-pub struct NoHasher;
-
-impl Default for NoHasher {
-    fn default() -> Self {
-        NoHasher
-    }
-}
-
-impl Hasher for NoHasher {
-    fn write(&mut self, _bytes: &[u8]) {
-        // No action is taken; we're not actually hashing anything here.
-    }
-
-    fn finish(&self) -> u64 {
-        0 // Return a constant hash value (0 in this case)
-    }
-}
-
-pub type ManualHashMap<K, V> = HashMap<K, V, BuildHasherDefault<NoHasher>>;
 
 #[derive(Clone)]
 pub struct RustFunctionWrapper {
@@ -88,28 +67,6 @@ pub enum VinegarObject {
     Function(Vec<String>, FunctionBody),
     List(Vec<VinegarObject>),
     RustStructWrapper(RustStructWrapper),
-}
-
-trait StringLiteralMap {
-    fn add_lit(&mut self, s: String, hasher: &mut DefaultHasher) -> u64;
-
-    fn get_lit(&self, h: &u64) -> &String;
-}
-
-impl StringLiteralMap for ManualHashMap<u64, String> {
-    fn add_lit(&mut self, s: String, hasher: &mut DefaultHasher) -> u64 {
-        s.hash(hasher);
-        let hash = hasher.finish();
-        if !self.contains_key(&hash) {
-            self.insert(hash, s);
-        }
-        hash
-    }
-
-    fn get_lit(&self, h: &u64) -> &String {
-        self.get(h)
-            .expect(&format!("string literal does not exist: {}", h))
-    }
 }
 
 impl VinegarObject {
@@ -437,19 +394,19 @@ where
 
 pub type VinegarScope = HashMap<String, VinegarObject>;
 
-pub struct Interpreter {
-    string_hasher: DefaultHasher,
+pub struct VinegarRuntime {
     string_literals: ManualHashMap<u64, String>,
+    string_hasher: DefaultHasher,
     global_scope: VinegarScope,
     local_stack: Vec<VinegarScope>,
     debug_info: DebugInfo,
 }
-impl Interpreter {
+impl VinegarRuntime {
     #[allow(dead_code)]
     pub fn interpret_string(s: &String, debug_info: Option<DebugInfo>) -> Result<(), Error> {
         let tokens = Lexer::lex_string(s.to_string(), debug_info.clone())?;
-        let code_body = Parser::parse_tokens(tokens, debug_info.clone())?;
-        Self::interpret_parse_tree(code_body, debug_info)?;
+        let parser_result = Parser::parse_tokens(tokens, debug_info.clone())?;
+        Self::interpret_parse_tree(parser_result, debug_info)?;
         Ok(())
     }
 
@@ -465,11 +422,11 @@ impl Interpreter {
             Err(err) => return Err(FileOrOtherError::from(err)),
         };
         let parser_result = Parser::parse_tokens(tokens, Some(debug_info.clone()));
-        let code_body = match parser_result {
+        let parser_result = match parser_result {
             Ok(c) => c,
             Err(err) => return Err(FileOrOtherError::from(err)),
         };
-        let interpreter_result = Self::interpret_parse_tree(code_body, Some(debug_info));
+        let interpreter_result = Self::interpret_parse_tree(parser_result, Some(debug_info));
         match interpreter_result {
             Ok(result) => Ok(result),
             Err(err) => Err(FileOrOtherError::from(err)),
@@ -477,12 +434,12 @@ impl Interpreter {
     }
 
     fn interpret_parse_tree(
-        tree_root: CodeBody,
+        parser_result: ParserResult,
         debug_info: Option<DebugInfo>,
     ) -> Result<VinegarObject, Error> {
-        let mut instance: Interpreter = Self {
-            string_hasher: DefaultHasher::new(),
-            string_literals: HashMap::default(),
+        let mut instance: VinegarRuntime = Self {
+            string_literals: parser_result.string_literals,
+            string_hasher: parser_result.string_hasher,
             global_scope: VinegarScope::new(),
             local_stack: vec![VinegarScope::new()],
             debug_info: match debug_info {
@@ -490,12 +447,12 @@ impl Interpreter {
                 None => DebugInfo::new(None, "(unknown source)".to_string()),
             },
         };
-        instance.interpret(tree_root)
+        instance.interpret(parser_result.tree_root)
     }
 
-    fn interpret(&mut self, code_body: CodeBody) -> Result<VinegarObject, Error> {
+    fn interpret(&mut self, tree_root: CodeBody) -> Result<VinegarObject, Error> {
         self.import_library::<vinegar_std::StandardLibrary>();
-        self.interpret_code_body(code_body)
+        self.interpret_code_body(tree_root)
     }
 
     fn interpret_code_body(&mut self, code_body: CodeBody) -> Result<VinegarObject, Error> {
@@ -578,10 +535,7 @@ impl Interpreter {
         match literal {
             &Literal::Int(i) => Ok(VinegarObject::Int(i)),
             &Literal::Float(f) => Ok(VinegarObject::Float(f)),
-            Literal::String(s) => Ok(VinegarObject::String(
-                self.string_literals
-                    .add_lit(s.clone(), &mut self.string_hasher),
-            )),
+            &Literal::String(s) => Ok(VinegarObject::String(s)),
         }
     }
 

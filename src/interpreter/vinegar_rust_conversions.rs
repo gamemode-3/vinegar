@@ -5,7 +5,8 @@ use std::{
 
 use super::{
     debug::VinegarError,
-    interpreter::{ManualHashMap, VinegarObject, VinegarObjectConversion},
+    runtime::{VinegarObject, VinegarObjectConversion},
+    string_literal_map::ManualHashMap,
 };
 
 impl VinegarObjectConversion<i64> for VinegarObject {
