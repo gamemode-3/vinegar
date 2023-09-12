@@ -73,7 +73,6 @@ pub fn vinegar_rust_struct_interface_derive(input: TokenStream) -> TokenStream {
         _ => panic!("RustStructInterface can only be derived for structs with named fields."),
     };
 
-
     let to_string_impl = match &input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(named_fields) => {
@@ -173,12 +172,7 @@ pub fn vinegar_constructor_derive(input: TokenStream) -> TokenStream {
                 for field in fields {
                     let field_name = field.ident.as_ref().unwrap();
                     assignments.push(quote! {
-                        // EVERYTHING THAT IS APPLIED FOR EACH
-                        // if name == stringify!(#field_name) {
-                        //     self.#field_name = value.into_other(string_literals)?;
-                        //     return Ok(());
-                        // }
-                        #field_name: VinegarObject::into_other(args_iter.next().unwrap(), string_literals)?,
+                        #field_name: VinegarObject::into_other(&args.get(stringify!(#field_name)).expect(&format!("not found: {}", stringify!(#field_name))), string_literals)?,
                     });
                 }
 
@@ -186,8 +180,8 @@ pub fn vinegar_constructor_derive(input: TokenStream) -> TokenStream {
                     fn new_vinegar(
                         _global_scope: &VinegarScope,
                         string_literals: &ManualHashMap<u64, String>,
-                        args: &Vec<VinegarObject>,) -> Result<VinegarObject, VinegarError> {
-                        let mut args_iter = args.iter();
+                        args: &VinegarScope,) -> Result<VinegarObject, VinegarError>
+                    {
                         let new_struct = #struct_name {
                             #(#assignments)*
                         };

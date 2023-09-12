@@ -1,9 +1,9 @@
-def function():
-    print("Hello", "\n")
+def get_name(a):
+    a.name
 
 
 
 
 a = Duck("Tom", 39, 3.3)
 
-print(a.v, "\n")
+print("My name is " + get_name(a), "\n")

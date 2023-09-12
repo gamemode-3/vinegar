@@ -5,44 +5,11 @@ pub enum Error {
     #[error("{0}\nLexerError:\n{1}")]
     LexerError(String, LexerError),
 
-    #[error("{0}\nunexpected end of file. {1}")]
-    UnexpectedEndOfFileError(String, String),
-
-    #[error("{0}\nunexpected end of statement. {1}")]
-    UnexpectedEndOfStatementError(String, String),
-
-    #[error("{0}\nunexpected indent.")]
-    UnexpectedIndentError(String),
-
-    #[error("{0}\n{1}")]
-    ExpectedIndentError(String, String),
-
-    #[error("{0}\nunexpected token: {1}. {2}")]
-    UnexpectedTokenError(String, String, String),
-
-    #[error("{0}\nexpected an expression.")]
-    ExpectedExpressionError(String),
-
-    #[error("invalid literal: {0}. {1}")]
-    InvalidLiteralError(String, String, String),
-
-    #[error("{0}\n{1}")]
-    MissingTokenError(String, String),
-
-    #[error("{0}\nunexpected literal: {1}. {2}")]
-    UnexpectedLiteralError(String, String, String),
-
-    #[error("{0}\n{1}")]
-    IncompatibleTypesError(String, String),
-
-    #[error("{0}\nunknown identifier: \"{1}\"")]
-    UnknownIdentifier(String, String),
+    #[error("{0}\nParserError:\n{1}")]
+    ParserError(String, ParserError),
 
     #[error("{0}\n{1}")]
     VinegarError(String, VinegarError),
-
-    #[error("{0}\n{1} \"{2}\" has no attribute \"{3}\"")]
-    AttributeNotFound(String, String, String, String),
 }
 
 #[derive(Debug, Error)]
@@ -58,6 +25,36 @@ pub enum LexerError {
 }
 
 #[derive(Debug, Error)]
+pub enum ParserError {
+    #[error("unexpected token: {0}. {1}")]
+    UnexpectedTokenError(String, String),
+
+    #[error("unexpected end of file. {0}")]
+    UnexpectedEndOfFileError(String),
+
+    #[error("unexpected indent.")]
+    UnexpectedIndentError(),
+
+    #[error("{0}")]
+    ExpectedIndentError(String),
+
+    #[error("{0}")]
+    MissingTokenError(String),
+
+    #[error("unexpected end of statement. {0}")]
+    UnexpectedEndOfStatementError(String),
+
+    #[error("expected an expression.")]
+    ExpectedExpressionError(),
+
+    #[error("invalid literal: {0}. {1}")]
+    InvalidLiteralError(String, String),
+
+    #[error("unexpected literal: {0}. {1}")]
+    UnexpectedLiteralError(String, String),
+}
+
+#[derive(Debug, Error)]
 pub enum VinegarError {
     #[error("{0} is of type {1}, which is not callable.")]
     NotCallableError(String, String),
@@ -68,8 +65,17 @@ pub enum VinegarError {
     #[error("{0}")]
     TypeError(String),
 
-    #[error("{0} has no attribute \"{1}\"")]
+    #[error("{0} \"{1}\" has no attribute \"{2}\"")]
+    VarAttributeNotFound(String, String, String),
+
+    #[error("\"{0}\" has no attribute \"{1}\"")]
     AttributeNotFound(String, String),
+
+    #[error("{0}")]
+    IncompatibleTypesError(String),
+
+    #[error("unknown identifier: \"{0}\"")]
+    UnknownIdentifier(String),
 }
 
 #[derive(Debug, Error)]

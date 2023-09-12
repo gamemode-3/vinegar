@@ -1,4 +1,3 @@
-use std::num::IntErrorKind;
 use std::sync::{Arc, Mutex};
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
@@ -11,7 +10,7 @@ use crate::file_handler;
 
 use super::parser::{DebugString, GetCharRange};
 use super::{
-    debug::{DebugInfo, FileOrOtherError, Error, VinegarError},
+    debug::{DebugInfo, Error, FileOrOtherError, VinegarError},
     lexer::Lexer,
     parser::{
         Assignment, BinaryOperator, CodeBody, Expression, FunctionCall, FunctionDefinition,
@@ -46,7 +45,7 @@ pub struct RustFunctionWrapper {
     pub runner: &'static dyn Fn(
         &VinegarScope,
         &ManualHashMap<u64, String>,
-        &Vec<VinegarObject>,
+        &VinegarScope,
     ) -> Result<VinegarObject, VinegarError>,
 }
 
@@ -55,9 +54,9 @@ impl RustFunctionWrapper {
         &self,
         global_scope: &VinegarScope,
         string_literals: &ManualHashMap<u64, String>,
-        args: &Vec<VinegarObject>,
+        new_local_scope: &VinegarScope,
     ) -> Result<VinegarObject, VinegarError> {
-        (*self.runner)(global_scope, string_literals, args)
+        (*self.runner)(global_scope, string_literals, new_local_scope)
     }
 }
 
@@ -91,8 +90,30 @@ pub enum VinegarObject {
     RustStructWrapper(RustStructWrapper),
 }
 
+trait StringLiteralMap {
+    fn add_lit(&mut self, s: String, hasher: &mut DefaultHasher) -> u64;
+
+    fn get_lit(&self, h: &u64) -> &String;
+}
+
+impl StringLiteralMap for ManualHashMap<u64, String> {
+    fn add_lit(&mut self, s: String, hasher: &mut DefaultHasher) -> u64 {
+        s.hash(hasher);
+        let hash = hasher.finish();
+        if !self.contains_key(&hash) {
+            self.insert(hash, s);
+        }
+        hash
+    }
+
+    fn get_lit(&self, h: &u64) -> &String {
+        self.get(h)
+            .expect(&format!("string literal does not exist: {}", h))
+    }
+}
+
 impl VinegarObject {
-    pub fn mul(&self, other: &Self) -> Result<Self, Error> {
+    pub fn mul(&self, other: &Self) -> Result<Self, VinegarError> {
         match self {
             &VinegarObject::Int(i) => match other {
                 VinegarObject::Int(other_i) => Ok(VinegarObject::Int(i * other_i)),
@@ -100,35 +121,42 @@ impl VinegarObject {
                 _ => other.mul(self),
             },
             VinegarObject::Float(_) => other.mul(self),
-            _ => Err(Error::IncompatibleTypesError(
-                "".into(),
-                format!(
-                    "cannot perform arithemtic objects of type {}.",
-                    self.type_name()
-                ),
-            )),
+            _ => Err(VinegarError::IncompatibleTypesError(format!(
+                "cannot perform arithemtic objects of type {}.",
+                self.type_name()
+            ))),
         }
     }
 
-    pub fn add(&self, other: &Self) -> Result<Self, Error> {
+    pub fn add(
+        &self,
+        other: &Self,
+        string_literals: &mut ManualHashMap<u64, String>,
+        string_hasher: &mut DefaultHasher,
+    ) -> Result<Self, VinegarError> {
         match self {
             &VinegarObject::Int(i) => match other {
                 VinegarObject::Int(other_i) => Ok(VinegarObject::Int(i + other_i)),
                 VinegarObject::Float(other_f) => Ok(VinegarObject::Float(i as f64 + other_f)),
-                _ => other.add(self),
+                _ => other.add(self, string_literals, string_hasher),
             },
-            VinegarObject::Float(_) => other.add(self),
-            _ => Err(Error::IncompatibleTypesError(
-                "".into(),
-                format!(
-                    "cannot perform arithemtic objects of type {}.",
-                    self.type_name()
-                ),
-            )),
+            VinegarObject::Float(_) => other.add(self, string_literals, string_hasher),
+            VinegarObject::String(h) => {
+                let mut self_string = string_literals.get_lit(h).clone();
+                let other_string = other.format_string(string_literals)?;
+                self_string.push_str(&other_string);
+                Ok(VinegarObject::String(
+                    string_literals.add_lit(self_string, string_hasher),
+                ))
+            }
+            _ => Err(VinegarError::IncompatibleTypesError(format!(
+                "cannot perform arithemtic objects of type {}.",
+                self.type_name()
+            ))),
         }
     }
 
-    pub fn sub(&self, other: &Self) -> Result<Self, Error> {
+    pub fn sub(&self, other: &Self) -> Result<Self, VinegarError> {
         match self {
             &VinegarObject::Int(i) => match other {
                 VinegarObject::Int(other_i) => Ok(VinegarObject::Int(i - other_i)),
@@ -140,17 +168,14 @@ impl VinegarObject {
                 VinegarObject::Float(other_f) => Ok(VinegarObject::Float(f - other_f)),
                 _ => other.sub(self),
             },
-            _ => Err(Error::IncompatibleTypesError(
-                "".into(),
-                format!(
-                    "cannot perform arithemtic objects of type {}.",
-                    self.type_name()
-                ),
-            )),
+            _ => Err(VinegarError::IncompatibleTypesError(format!(
+                "cannot perform arithemtic objects of type {}.",
+                self.type_name()
+            ))),
         }
     }
 
-    pub fn div(&self, other: &Self) -> Result<Self, Error> {
+    pub fn div(&self, other: &Self) -> Result<Self, VinegarError> {
         match self {
             &VinegarObject::Int(i) => match other {
                 &VinegarObject::Int(other_i) => Ok(VinegarObject::Float(i as f64 / other_i as f64)),
@@ -162,13 +187,10 @@ impl VinegarObject {
                 VinegarObject::Float(other_f) => Ok(VinegarObject::Float(f / other_f)),
                 _ => other.sub(self),
             },
-            _ => Err(Error::IncompatibleTypesError(
-                "".into(),
-                format!(
-                    "cannot perform arithemtic objects of type {}.",
-                    self.type_name()
-                ),
-            )),
+            _ => Err(VinegarError::IncompatibleTypesError(format!(
+                "cannot perform arithemtic objects of type {}.",
+                self.type_name()
+            ))),
         }
     }
 
@@ -297,7 +319,7 @@ impl VinegarObject {
             VinegarObject::None => "None".to_string(),
             VinegarObject::Int(i) => format!("{}", i),
             VinegarObject::Float(f) => format!("{}", f),
-            VinegarObject::String(s) => format!("{}", string_literals[s]),
+            VinegarObject::String(h) => format!("{}", string_literals.get_lit(h)),
             VinegarObject::List(l) => {
                 let mut object_strings: Vec<String> = Vec::new();
                 for o in l {
@@ -338,15 +360,17 @@ impl VinegarObject {
         string_hasher: &mut DefaultHasher,
     ) -> Result<VinegarObject, VinegarError> {
         match name {
-            
-            _ => ()
+            _ => (),
         }
         match self {
             VinegarObject::RustStructWrapper(w) => {
                 let object = w.object.lock().unwrap();
                 object.get_attribute(name, string_literals, string_hasher)
             }
-            _ => Err(VinegarError::AttributeNotFound(self.format_string(string_literals)?, name.clone())), // TODO
+            _ => Err(VinegarError::AttributeNotFound(
+                self.format_string(string_literals)?,
+                name.clone(),
+            )), // TODO
         }
     }
 }
@@ -378,7 +402,7 @@ pub trait VinegarConstructor {
     fn new_vinegar(
         _global_scope: &VinegarScope,
         string_literals: &ManualHashMap<u64, String>,
-        args: &Vec<VinegarObject>,
+        args: &VinegarScope,
     ) -> Result<VinegarObject, VinegarError>;
 
     fn import_vinegar_constructor(scope: &mut VinegarScope);
@@ -422,10 +446,7 @@ pub struct Interpreter {
 }
 impl Interpreter {
     #[allow(dead_code)]
-    pub fn interpret_string(
-        s: &String,
-        debug_info: Option<DebugInfo>,
-    ) -> Result<(), Error> {
+    pub fn interpret_string(s: &String, debug_info: Option<DebugInfo>) -> Result<(), Error> {
         let tokens = Lexer::lex_string(s.to_string(), debug_info.clone())?;
         let code_body = Parser::parse_tokens(tokens, debug_info.clone())?;
         Self::interpret_parse_tree(code_body, debug_info)?;
@@ -477,10 +498,7 @@ impl Interpreter {
         self.interpret_code_body(code_body)
     }
 
-    fn interpret_code_body(
-        &mut self,
-        code_body: CodeBody,
-    ) -> Result<VinegarObject, Error> {
+    fn interpret_code_body(&mut self, code_body: CodeBody) -> Result<VinegarObject, Error> {
         let mut last_result = VinegarObject::None;
         for statement in code_body.statements {
             last_result = match statement {
@@ -513,10 +531,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn interpret_expression(
-        &mut self,
-        expression: &Expression,
-    ) -> Result<VinegarObject, Error> {
+    fn interpret_expression(&mut self, expression: &Expression) -> Result<VinegarObject, Error> {
         match expression {
             Expression::BinaryOperator(bin_op) => self.interpret_bin_op(bin_op),
             Expression::Literal(l) => self.interpret_literal(l),
@@ -525,10 +540,7 @@ impl Interpreter {
         }
     }
 
-    fn interpret_variable(
-        &mut self,
-        identifier: &Indentifier,
-    ) -> Result<VinegarObject, Error> {
+    fn interpret_variable(&mut self, identifier: &Indentifier) -> Result<VinegarObject, Error> {
         match identifier {
             Indentifier::Final(name, range) => {
                 match self.global_scope.get(name) {
@@ -539,20 +551,23 @@ impl Interpreter {
                     Some(value) => return Ok(value.clone()),
                     None => (),
                 };
-                Err(Error::UnknownIdentifier(
+                Err(Error::VinegarError(
                     self.get_error_prefix(range.clone()),
-                    name.clone(),
+                    VinegarError::UnknownIdentifier(name.clone()),
                 ))
             }
             Indentifier::Member(name, expr, range) => {
                 let value = self.interpret_expression(expr)?;
-                match value.get_attribute(name, &mut self.string_literals, &mut self.string_hasher) {
+                match value.get_attribute(name, &mut self.string_literals, &mut self.string_hasher)
+                {
                     Ok(v) => Ok(v),
-                    Err(err) => Err(Error::AttributeNotFound(
+                    Err(_) => Err(Error::VinegarError(
                         self.get_error_prefix(range.clone()),
-                        value.type_name().to_string(),
-                        expr.debug_string(),
-                        name.to_string(),
+                        VinegarError::VarAttributeNotFound(
+                            value.type_name().to_string(),
+                            expr.debug_string(),
+                            name.to_string(),
+                        ),
                     )),
                 }
             }
@@ -563,41 +578,51 @@ impl Interpreter {
         match literal {
             &Literal::Int(i) => Ok(VinegarObject::Int(i)),
             &Literal::Float(f) => Ok(VinegarObject::Float(f)),
-            Literal::String(s) => {
-                s.hash(&mut self.string_hasher);
-                let hash = self.string_hasher.finish();
-                if !self.string_literals.contains_key(&hash) {
-                    self.string_literals.insert(hash, s.clone());
+            Literal::String(s) => Ok(VinegarObject::String(
+                self.string_literals
+                    .add_lit(s.clone(), &mut self.string_hasher),
+            )),
+        }
+    }
+
+    fn interpret_bin_op(&mut self, op: &Rc<BinaryOperator>) -> Result<VinegarObject, Error> {
+        match &**op {
+            BinaryOperator::Add(a, b) => {
+                let value_a = self.interpret_expression(a)?;
+                let value_b = self.interpret_expression(b)?;
+                match value_a.add(&value_b, &mut self.string_literals, &mut self.string_hasher) {
+                    Ok(v) => Ok(v),
+                    Err(err) => Err(Error::VinegarError(self.get_error_prefix(1..0), err)),
                 }
-                Ok(VinegarObject::String(hash))
+            }
+            BinaryOperator::Sub(a, b) => {
+                let value_a = self.interpret_expression(a)?;
+                let value_b = self.interpret_expression(b)?;
+                match value_a.sub(&value_b) {
+                    Ok(v) => Ok(v),
+                    Err(err) => Err(Error::VinegarError(self.get_error_prefix(1..0), err)),
+                }
+            }
+            BinaryOperator::Mul(a, b) => {
+                let value_a = self.interpret_expression(a)?;
+                let value_b = self.interpret_expression(b)?;
+                match value_a.mul(&value_b) {
+                    Ok(v) => Ok(v),
+                    Err(err) => Err(Error::VinegarError(self.get_error_prefix(1..0), err)),
+                }
+            }
+            BinaryOperator::Div(a, b) => {
+                let value_a = self.interpret_expression(a)?;
+                let value_b = self.interpret_expression(b)?;
+                match value_a.div(&value_b) {
+                    Ok(v) => Ok(v),
+                    Err(err) => Err(Error::VinegarError(self.get_error_prefix(1..0), err)),
+                }
             }
         }
     }
 
-    fn interpret_bin_op(
-        &mut self,
-        op: &Rc<BinaryOperator>,
-    ) -> Result<VinegarObject, Error> {
-        match &**op {
-            BinaryOperator::Add(a, b) => self
-                .interpret_expression(a)?
-                .add(&self.interpret_expression(b)?),
-            BinaryOperator::Sub(a, b) => self
-                .interpret_expression(a)?
-                .sub(&self.interpret_expression(b)?),
-            BinaryOperator::Mul(a, b) => self
-                .interpret_expression(a)?
-                .mul(&self.interpret_expression(b)?),
-            BinaryOperator::Div(a, b) => self
-                .interpret_expression(a)?
-                .div(&self.interpret_expression(b)?),
-        }
-    }
-
-    fn interpret_function_call(
-        &mut self,
-        f: &Rc<FunctionCall>,
-    ) -> Result<VinegarObject, Error> {
+    fn interpret_function_call(&mut self, f: &Rc<FunctionCall>) -> Result<VinegarObject, Error> {
         let func = self.interpret_expression(&f.expr)?;
         match func {
             VinegarObject::Function(expected_args, body) => {
@@ -623,15 +648,21 @@ impl Interpreter {
                     ));
                 }
 
-                let mut arg_results = Vec::new();
-                for arg in &f.args {
-                    arg_results.push(self.interpret_expression(&arg)?);
+                let mut function_scope = VinegarScope::new();
+                for (arg, name) in (&f.args).iter().zip(expected_args) {
+                    function_scope.insert(name, self.interpret_expression(&arg)?);
                 }
+
+                self.local_stack.push(function_scope);
 
                 let result = match body {
                     FunctionBody::VinegarBody(b) => self.interpret_code_body(b),
                     FunctionBody::RustWrapper(w) => {
-                        match w.run(&self.global_scope, &self.string_literals, &arg_results) {
+                        match w.run(
+                            &self.global_scope,
+                            &self.string_literals,
+                            self.local_stack.last().unwrap(),
+                        ) {
                             Ok(result) => Ok(result),
                             Err(err) => Err(Error::VinegarError(
                                 self.get_error_prefix(f.expr.get_char_range()),
@@ -640,6 +671,7 @@ impl Interpreter {
                         }
                     }
                 };
+                self.local_stack.pop();
                 result
             }
             _ => {
@@ -651,10 +683,7 @@ impl Interpreter {
         }
     }
 
-    fn interpret_function_definition(
-        &mut self,
-        func: FunctionDefinition,
-    ) -> Result<(), Error> {
+    fn interpret_function_definition(&mut self, func: FunctionDefinition) -> Result<(), Error> {
         let name = &func.name;
 
         let value: VinegarObject =

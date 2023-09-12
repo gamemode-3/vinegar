@@ -13,12 +13,12 @@ use rust_struct_wrapper_macro::{VinegarConstructor, VinegarRustStructInterface};
 fn vinegar_print(
     _global_scope: &VinegarScope,
     string_literals: &ManualHashMap<u64, String>,
-    args: &Vec<VinegarObject>,
+    args: &VinegarScope,
 ) -> Result<VinegarObject, VinegarError> {
     print!(
         "{}{}",
-        args[0].format_string(string_literals)?,
-        args[1].format_string(string_literals)?,
+        args["value"].format_string(string_literals)?,
+        args["endswith"].format_string(string_literals)?,
     );
 
     Ok(VinegarObject::None)
