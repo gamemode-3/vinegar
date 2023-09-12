@@ -9,7 +9,9 @@ use std::{
 use crate::file_handler;
 
 use super::debug::OrError;
-use super::parser::{DebugString, GetCharRange, ParserResult, UnaryOperator, UnaryOperatorType};
+use super::parser::{
+    BinaryOperatorType, DebugString, GetCharRange, ParserResult, UnaryOperator, UnaryOperatorType,
+};
 use super::string_literal_map::StringLiteralMap;
 use super::{
     debug::{DebugInfo, Error, FileOrOtherError, VinegarError},
@@ -621,46 +623,32 @@ impl VinegarRuntime {
     }
 
     fn interpret_bin_op(&mut self, op: &Rc<BinaryOperator>) -> Result<VinegarObject, Error> {
-        match &**op {
-            BinaryOperator::Add(a, b) => {
-                let value_a = self.interpret_expression(a)?;
-                let value_b = self.interpret_expression(b)?;
-                match value_a.add(&value_b, &mut self.string_literals, &mut self.string_hasher) {
-                    Ok(v) => Ok(v),
-                    Err(err) => Err(Error::VinegarError(self.get_error_prefix(1..0), err)),
-                }
-            }
-            BinaryOperator::Sub(a, b) => {
-                let value_a = self.interpret_expression(a)?;
-                let value_b = self.interpret_expression(b)?;
-                match value_a.sub(&value_b) {
-                    Ok(v) => Ok(v),
-                    Err(err) => Err(Error::VinegarError(self.get_error_prefix(1..0), err)),
-                }
-            }
-            BinaryOperator::Mul(a, b) => {
-                let value_a = self.interpret_expression(a)?;
-                let value_b = self.interpret_expression(b)?;
-                match value_a.mul(&value_b) {
-                    Ok(v) => Ok(v),
-                    Err(err) => Err(Error::VinegarError(self.get_error_prefix(1..0), err)),
-                }
-            }
-            BinaryOperator::Div(a, b) => {
-                let value_a = self.interpret_expression(a)?;
-                let value_b = self.interpret_expression(b)?;
-                match value_a.div(&value_b) {
-                    Ok(v) => Ok(v),
-                    Err(err) => Err(Error::VinegarError(self.get_error_prefix(1..0), err)),
-                }
-            }
+        let value_left = self.interpret_expression(&(&**op).left)?;
+        let value_right = self.interpret_expression(&(&**op).right)?;
+        match (&**op).op_type {
+            BinaryOperatorType::Add => value_left
+                .add(
+                    &value_right,
+                    &mut self.string_literals,
+                    &mut self.string_hasher,
+                )
+                .or_error(self.get_error_prefix(op.get_char_range())),
+            BinaryOperatorType::Sub => value_left
+                .sub(&value_right)
+                .or_error(self.get_error_prefix(op.get_char_range())),
+            BinaryOperatorType::Mul => value_left
+                .mul(&value_right)
+                .or_error(self.get_error_prefix(op.get_char_range())),
+            BinaryOperatorType::Div => value_left
+                .div(&value_right)
+                .or_error(self.get_error_prefix(op.get_char_range())),
         }
     }
 
     fn interpret_un_op(&mut self, op: &Rc<UnaryOperator>) -> Result<VinegarObject, Error> {
+        let value = self.interpret_expression(&op.expr)?;
         match (&**op).op_type {
             UnaryOperatorType::Invert => {
-                let value = self.interpret_expression(&op.expr)?;
                 Ok(value
                     .invert()
                     .or_error(self.get_error_prefix(op.get_char_range()))?)

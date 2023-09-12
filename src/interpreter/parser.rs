@@ -125,13 +125,23 @@ pub enum UnaryOperatorType {
 }
 
 #[derive(Debug)]
-pub enum BinaryOperator {
-    Add(Expression, Expression),
-    Sub(Expression, Expression),
-    Mul(Expression, Expression),
-    Div(Expression, Expression),
+pub struct BinaryOperator {
+    pub op_type: BinaryOperatorType,
+    pub left: Expression,
+    pub right: Expression,
 }
 
+impl BinaryOperator {
+    pub fn new(op_type: BinaryOperatorType, left: Expression, right: Expression) -> Self {
+        BinaryOperator {
+            op_type,
+            left,
+            right,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum BinaryOperatorType {
     Add,
     Sub,
@@ -146,19 +156,6 @@ impl BinaryOperator {
             BinaryOperatorType::Sub => 1,
             BinaryOperatorType::Mul => 2,
             BinaryOperatorType::Div => 2,
-        }
-    }
-
-    pub fn get_operator(
-        token: &BinaryOperatorType,
-        a: Expression,
-        b: Expression,
-    ) -> BinaryOperator {
-        match token {
-            BinaryOperatorType::Add => BinaryOperator::Add(a, b),
-            BinaryOperatorType::Sub => BinaryOperator::Sub(a, b),
-            BinaryOperatorType::Mul => BinaryOperator::Mul(a, b),
-            BinaryOperatorType::Div => BinaryOperator::Div(a, b),
         }
     }
 
@@ -712,7 +709,7 @@ impl Parser {
             self.next();
 
             a = match self.next_expression(op_prec + 1)? {
-                Some(b) => Expression::from(BinaryOperator::get_operator(&op_type, a, b)),
+                Some(b) => Expression::from(BinaryOperator::new(op_type, a, b)),
                 None => {
                     return Err(Error::ParserError(
                         self.get_error_prefix(),
