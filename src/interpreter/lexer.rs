@@ -62,7 +62,7 @@ impl Token {
         match self {
             Token::Word(s) => format!("\"{}\"", s),
             Token::NewLine(n) => format!("<newline {}>", n.indent),
-            Token::StringLiteral(s) => format!("<string_literal \"{}\">", s),
+            Token::StringLiteral(s) => format!("<string_literal \"{}\">", s.escape_default()),
             Token::ParenOpen => ("\'(\'").into(),
             Token::ParenClose => ("\')\'").into(),
             Token::Colon => ("\':\'").into(),

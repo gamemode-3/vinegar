@@ -29,7 +29,7 @@ pub fn vinegar_rust_struct_interface_derive(input: TokenStream) -> TokenStream {
                 }
 
                 quote! {
-                    fn get_attribute(&self, name: &String, string_literals: &mut ManualHashMap<u64, String>, string_hasher: &mut DefaultHasher) -> Result<VinegarObject, VinegarError> {
+                    fn get_attribute(&self, name: &String, string_literals: &mut StringLiteralMap, string_hasher: &mut DefaultHasher) -> Result<VinegarObject, VinegarError> {
                         #(#getters)*
                         Err(VinegarError::AttributeNotFound(self.to_string(string_literals)?, name.clone()))
                     }
@@ -62,7 +62,7 @@ pub fn vinegar_rust_struct_interface_derive(input: TokenStream) -> TokenStream {
                 }
 
                 quote! {
-                    fn set_attribute(&mut self, name: &String, value: VinegarObject, string_literals: &ManualHashMap<u64, String>) -> Result<(), VinegarError> {
+                    fn set_attribute(&mut self, name: &String, value: VinegarObject, string_literals: &StringLiteralMap) -> Result<(), VinegarError> {
                         #(#setters)*
                         Err(VinegarError::AttributeNotFound(self.to_string(string_literals)?, name.clone()))
                     }
@@ -95,7 +95,7 @@ pub fn vinegar_rust_struct_interface_derive(input: TokenStream) -> TokenStream {
                 }
 
                 quote! {
-                    fn to_string(&self, string_literals: &ManualHashMap<u64, String>) -> Result<String, VinegarError> {
+                    fn to_string(&self, string_literals: &StringLiteralMap) -> Result<String, VinegarError> {
                         let mut rv = String::new();
                         rv.push_str(stringify!(#struct_name));
                         rv.push_str(" { ");
@@ -179,7 +179,7 @@ pub fn vinegar_constructor_derive(input: TokenStream) -> TokenStream {
                 quote! {
                     fn new_vinegar(
                         _global_scope: &VinegarScope,
-                        string_literals: &ManualHashMap<u64, String>,
+                        string_literals: &StringLiteralMap,
                         args: &VinegarScope,) -> Result<VinegarObject, VinegarError>
                     {
                         let new_struct = #struct_name {

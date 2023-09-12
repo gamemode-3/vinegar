@@ -20,14 +20,15 @@ impl Hasher for NoHasher {
 }
 
 pub type ManualHashMap<K, V> = HashMap<K, V, BuildHasherDefault<NoHasher>>;
+pub type StringLiteralMap = ManualHashMap<u64, String>;
 
-pub trait StringLiteralMap {
+pub trait MapStringLiterals {
     fn add_lit(&mut self, s: String, hasher: &mut DefaultHasher) -> u64;
 
     fn get_lit(&self, h: &u64) -> &String;
 }
 
-impl StringLiteralMap for ManualHashMap<u64, String> {
+impl MapStringLiterals for StringLiteralMap {
     fn add_lit(&mut self, s: String, hasher: &mut DefaultHasher) -> u64 {
         s.hash(hasher);
         let hash = hasher.finish();

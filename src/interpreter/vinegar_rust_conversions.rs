@@ -5,18 +5,18 @@ use std::{
 
 use super::{
     debug::VinegarError,
-    runtime::{VinegarObject, VinegarObjectConversion, Function},
-    string_literal_map::ManualHashMap,
+    runtime::{Function, VinegarObject, VinegarObjectConversion},
+    string_literal_map::StringLiteralMap,
 };
 
 impl VinegarObjectConversion<i64> for VinegarObject {
-    fn into_other(&self, _: &ManualHashMap<u64, String>) -> Result<i64, VinegarError> {
+    fn into_other(&self, _: &StringLiteralMap) -> Result<i64, VinegarError> {
         self.as_i64()
     }
 
     fn from_other(
         value: i64,
-        _string_literals: &mut ManualHashMap<u64, String>,
+        _string_literals: &mut StringLiteralMap,
         _string_hasher: &mut DefaultHasher,
     ) -> Result<VinegarObject, VinegarError> {
         Ok(VinegarObject::Int(value))
@@ -24,13 +24,13 @@ impl VinegarObjectConversion<i64> for VinegarObject {
 }
 
 impl VinegarObjectConversion<usize> for VinegarObject {
-    fn into_other(&self, _: &ManualHashMap<u64, String>) -> Result<usize, VinegarError> {
+    fn into_other(&self, _: &StringLiteralMap) -> Result<usize, VinegarError> {
         self.as_usize()
     }
 
     fn from_other(
         value: usize,
-        _string_literals: &mut ManualHashMap<u64, String>,
+        _string_literals: &mut StringLiteralMap,
         _string_hasher: &mut DefaultHasher,
     ) -> Result<VinegarObject, VinegarError> {
         Ok(VinegarObject::Int(value as i64))
@@ -38,13 +38,13 @@ impl VinegarObjectConversion<usize> for VinegarObject {
 }
 
 impl VinegarObjectConversion<f64> for VinegarObject {
-    fn into_other(&self, _: &ManualHashMap<u64, String>) -> Result<f64, VinegarError> {
+    fn into_other(&self, _: &StringLiteralMap) -> Result<f64, VinegarError> {
         self.as_f64()
     }
 
     fn from_other(
         value: f64,
-        _string_literals: &mut ManualHashMap<u64, String>,
+        _string_literals: &mut StringLiteralMap,
         _string_hasher: &mut DefaultHasher,
     ) -> Result<VinegarObject, VinegarError> {
         Ok(VinegarObject::Float(value))
@@ -52,16 +52,13 @@ impl VinegarObjectConversion<f64> for VinegarObject {
 }
 
 impl VinegarObjectConversion<String> for VinegarObject {
-    fn into_other(
-        &self,
-        string_literals: &ManualHashMap<u64, String>,
-    ) -> Result<String, VinegarError> {
+    fn into_other(&self, string_literals: &StringLiteralMap) -> Result<String, VinegarError> {
         self.as_string(string_literals).cloned()
     }
 
     fn from_other(
         value: String,
-        string_literals: &mut ManualHashMap<u64, String>,
+        string_literals: &mut StringLiteralMap,
         string_hasher: &mut DefaultHasher,
     ) -> Result<VinegarObject, VinegarError> {
         value.hash(string_hasher);

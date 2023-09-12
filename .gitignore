@@ -1,4 +1,5 @@
 /target
+/rust_struct_wrapper_macro/target
 
 
 # Added by cargo

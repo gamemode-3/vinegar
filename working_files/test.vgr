@@ -1,5 +1,5 @@
 def get_name(
-    object, message: "retrieving name"
+    object, message: "default"
 ):
     print(message, "\n")
     object.name
@@ -9,13 +9,11 @@ def get_name(
  
 a = Duck("Tom", 39, 3.3)
 
-print(
-    "My name is " + get_name(
-        message: "", a
-    ), 
-    "\n\n"
-)
+tom_greeting = get_name(a)
+print("My name is " + tom_greeting, "\n\n")
 
-print(
-    "My name is " + get_name(a), "\n"
-)
+tom_greeting = get_name(message: "keyword", a)
+print("My name is " + tom_greeting, "\n\n")
+
+tom_greeting = get_name(a, "positional")
+print("My name is " + tom_greeting, "")

@@ -1,7 +1,7 @@
 use super::debug::{DebugInfo, Error, FileOrOtherError, ParserError};
 use super::iter::{CanConcatenate, SingleItemIterator};
 use super::lexer::{DebugToken, Lexer, Token};
-use super::string_literal_map::{ManualHashMap, StringLiteralMap};
+use super::string_literal_map::{MapStringLiterals, StringLiteralMap};
 use crate::file_handler;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -323,7 +323,7 @@ impl CanBeInt for f64 {
 pub struct Parser {
     debug_info: DebugInfo,
     tokens: Vec<DebugToken>,
-    string_literals: ManualHashMap<u64, String>,
+    string_literals: StringLiteralMap,
     string_hasher: DefaultHasher,
     pointer: usize,
     paren_depth: usize,
@@ -331,7 +331,7 @@ pub struct Parser {
 
 pub struct ParserResult {
     pub tree_root: CodeBody,
-    pub string_literals: ManualHashMap<u64, String>,
+    pub string_literals: StringLiteralMap,
     pub string_hasher: DefaultHasher,
 }
 
@@ -528,7 +528,8 @@ impl Parser {
                 let identifier = match self.peek_token() {
                     Some(Token::Word(w)) => w,
                     _ => break,
-                }.clone();
+                }
+                .clone();
                 self.next();
                 match self.peek_token() {
                     Some(Token::Colon) => {
@@ -697,12 +698,13 @@ impl Parser {
                         self, self.next_token(),
                         Token::Word(w) => w;
                         "expected keyword argument name before colon"
-                    ).clone();
+                    )
+                    .clone();
                     self.next();
                     let expr = expect_expression!(self);
                     all_args.push((Some(name), expr));
                 }
-                _ => all_args.push((None, expect_expression!(self)))
+                _ => all_args.push((None, expect_expression!(self))),
             };
             expect_token!(self, self.peek_token(),
                 Token::Comma => {

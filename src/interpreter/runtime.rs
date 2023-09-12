@@ -10,6 +10,7 @@ use crate::file_handler;
 
 use super::debug::OrError;
 use super::parser::{DebugString, GetCharRange, ParserResult};
+use super::string_literal_map::StringLiteralMap;
 use super::{
     debug::{DebugInfo, Error, FileOrOtherError, VinegarError},
     lexer::Lexer,
@@ -17,7 +18,7 @@ use super::{
         Assignment, BinaryOperator, CodeBody, Expression, FunctionCall, FunctionDefinition,
         Indentifier, Literal, Parser, Statement,
     },
-    string_literal_map::{ManualHashMap, StringLiteralMap},
+    string_literal_map::MapStringLiterals,
     vinegar_std,
 };
 
@@ -25,7 +26,7 @@ use super::{
 pub struct RustFunctionWrapper {
     pub runner: &'static dyn Fn(
         &VinegarScope,
-        &ManualHashMap<u64, String>,
+        &StringLiteralMap,
         &VinegarScope,
     ) -> Result<VinegarObject, VinegarError>,
 }
@@ -34,7 +35,7 @@ impl RustFunctionWrapper {
     fn run(
         &self,
         global_scope: &VinegarScope,
-        string_literals: &ManualHashMap<u64, String>,
+        string_literals: &StringLiteralMap,
         new_local_scope: &VinegarScope,
     ) -> Result<VinegarObject, VinegarError> {
         (*self.runner)(global_scope, string_literals, new_local_scope)
@@ -42,7 +43,10 @@ impl RustFunctionWrapper {
 }
 
 pub trait Library {
-    fn get_globals() -> HashMap<String, VinegarObject>;
+    fn get_globals(
+        string_literals: &mut StringLiteralMap,
+        string_hasher: &mut DefaultHasher,
+    ) -> HashMap<String, VinegarObject>;
 }
 
 #[derive(Clone)]
@@ -137,7 +141,7 @@ impl VinegarObject {
     pub fn add(
         &self,
         other: &Self,
-        string_literals: &mut ManualHashMap<u64, String>,
+        string_literals: &mut StringLiteralMap,
         string_hasher: &mut DefaultHasher,
     ) -> Result<Self, VinegarError> {
         match self {
@@ -226,7 +230,7 @@ impl VinegarObject {
 
     pub fn as_string<'a>(
         &'a self,
-        string_literals: &'a ManualHashMap<u64, String>,
+        string_literals: &'a StringLiteralMap,
     ) -> Result<&String, VinegarError> {
         match self {
             VinegarObject::String(s) => Ok(string_literals.get(s).unwrap()),
@@ -319,7 +323,7 @@ impl VinegarObject {
 
     pub fn format_string(
         &self,
-        string_literals: &ManualHashMap<u64, String>,
+        string_literals: &StringLiteralMap,
     ) -> Result<String, VinegarError> {
         Ok(match self {
             VinegarObject::None => "None".to_string(),
@@ -381,7 +385,7 @@ impl VinegarObject {
     pub fn get_attribute(
         &self,
         name: &String,
-        string_literals: &mut ManualHashMap<u64, String>,
+        string_literals: &mut StringLiteralMap,
         string_hasher: &mut DefaultHasher,
     ) -> Result<VinegarObject, VinegarError> {
         match name {
@@ -404,7 +408,7 @@ pub trait RustStructInterface: std::fmt::Debug {
     fn get_attribute(
         &self,
         name: &String,
-        string_literals: &mut ManualHashMap<u64, String>,
+        string_literals: &mut StringLiteralMap,
         string_hasher: &mut DefaultHasher,
     ) -> Result<VinegarObject, VinegarError>;
 
@@ -412,13 +416,10 @@ pub trait RustStructInterface: std::fmt::Debug {
         &mut self,
         name: &String,
         value: VinegarObject,
-        string_literals: &ManualHashMap<u64, String>,
+        string_literals: &StringLiteralMap,
     ) -> Result<(), VinegarError>;
 
-    fn to_string(
-        &self,
-        string_literals: &ManualHashMap<u64, String>,
-    ) -> Result<String, VinegarError>;
+    fn to_string(&self, string_literals: &StringLiteralMap) -> Result<String, VinegarError>;
 
     fn write_debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
 }
@@ -426,7 +427,7 @@ pub trait RustStructInterface: std::fmt::Debug {
 pub trait VinegarConstructor {
     fn new_vinegar(
         _global_scope: &VinegarScope,
-        string_literals: &ManualHashMap<u64, String>,
+        string_literals: &StringLiteralMap,
         args: &VinegarScope,
     ) -> Result<VinegarObject, VinegarError>;
 
@@ -451,11 +452,11 @@ where
     T: Sized,
     Self: Sized,
 {
-    fn into_other(&self, string_literals: &ManualHashMap<u64, String>) -> Result<T, VinegarError>;
+    fn into_other(&self, string_literals: &StringLiteralMap) -> Result<T, VinegarError>;
 
     fn from_other(
         value: T,
-        string_literals: &mut ManualHashMap<u64, String>,
+        string_literals: &mut StringLiteralMap,
         string_hasher: &mut DefaultHasher,
     ) -> Result<Self, VinegarError>;
 }
@@ -463,7 +464,7 @@ where
 pub type VinegarScope = HashMap<String, VinegarObject>;
 
 pub struct VinegarRuntime {
-    string_literals: ManualHashMap<u64, String>,
+    string_literals: StringLiteralMap,
     string_hasher: DefaultHasher,
     global_scope: VinegarScope,
     local_stack: Vec<VinegarScope>,
@@ -770,7 +771,10 @@ impl VinegarRuntime {
     where
         T: Library,
     {
-        self.global_scope.extend(T::get_globals());
+        self.global_scope.extend(T::get_globals(
+            &mut self.string_literals,
+            &mut self.string_hasher,
+        ));
     }
 
     fn get_error_prefix(&self, range: Range<usize>) -> String {
