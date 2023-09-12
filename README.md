@@ -13,6 +13,7 @@ function:
     arg1
     arg3: "example"
 ```
+> NOTE: this is not functional in the current version
 
 
 to define a function:
@@ -21,6 +22,7 @@ def function(arg1 (Type), arg2: default, arg3):
     do_something()
     return "result"
 ```
+> NOTE: type annotations and returned values are not functional in the current version
 
 to assign a value to a variable:
 ```
@@ -32,6 +34,7 @@ variables that are passed to a rust function are retrospectively typed. for exam
 ```
 pub fn rust_function(list: Vec<String>) {...}
 ```
+> NOTE: there currently is no typing system, or any type of compile time anlysis. the examples given here would cause runtime errors.
 
 then this:
 
@@ -96,61 +99,14 @@ note that any word that is not recognised as an identifier is treated as a strin
 
 this might be confusing, but is helpful for cases like the above.
 
-for accessing members of a variable, simply use a space:
+for accessing members of a variable, simply use a period:
 
 ```
-variable member
+variable.member
 ```
 or, if you want it in the next line:
 ```
-variable 
+variable. 
     member
 ```
-
-## syntax
-$$
-\begin{align}
-    \text{[code\_body]} &\to \text{[statement] \textbackslash n ... \textbackslash n [statement]}\\
-    \text{[statement]} &\to 
-        \begin{cases}
-            \text{[expression]}\\
-            \text{[var\_assignment]}\\
-            \text{[func\_definition]}\\
-            \text{[condition]}\\
-            \text{[while\_loop]}\\
-            \text{[for\_loop]}\\
-        \end{cases}\\
-    \text{[expression]} &\to 
-        \begin{cases}
-            \text{identifier}\\
-            \text{[function\_call]}\\
-            \text{[internal\_expr]}\\
-            \text{[literal]}\\
-            \text{[generator]}\\
-            (\text{[expression]})\\
-        \end{cases}\\
-    \text{[function\_call]} &\to 
-        \begin{cases}
-            \text{identifier([calling\_arg], ..., [calling\_arg])} \\
-            \text{identifier:\textbackslash n <i+> [calling\_arg ]\textbackslash n ... \textbackslash n[\text  calling\_arg]\textbackslash n<i->}
-        \end{cases}\\
-    \text{[calling\_arg]} &\to 
-        \begin{cases}
-            \text{[expression]}\\
-            \text{[expression]: [expression]}
-        \end{cases}
-        \\ 
-    \text{[internal\_expr]} &\to 
-        \begin{cases}
-            \text{[expression] + [expression]}\\
-            \text{[expression] - [expression]}\\
-            \text{[expression] * [expression]}\\
-            \text{[expression] / [expression]}\\
-            \text{-[expression]}\\
-            \text{[expression] or [expression]}\\
-            \text{[expression] and [expression]}\\
-            \text{not [expression]}\\
-        \end{cases}\\
-    
-\end{align}
-$$
+> NOTE: this is not functional in the current version
