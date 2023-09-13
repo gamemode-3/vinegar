@@ -3,12 +3,11 @@ use std::sync::{Arc, Mutex};
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     ops::Range,
-    rc::Rc,
 };
 
 use crate::file_handler;
 
-use super::debug::OrError;
+use super::debug::{get_error_prefix, OrError};
 use super::parser::{
     BinaryOperatorType, DebugString, GetCharRange, ParserResult, UnaryOperator, UnaryOperatorType,
 };
@@ -135,8 +134,9 @@ impl VinegarObject {
             },
             VinegarObject::Float(_) => other.mul(self),
             _ => Err(VinegarError::IncompatibleTypesError(format!(
-                "cannot perform arithemtic objects of type {}.",
-                self.type_name()
+                "operator \"*\" not valid for types {} and {}.",
+                self.type_name(),
+                other.type_name()
             ))),
         }
     }
@@ -163,8 +163,9 @@ impl VinegarObject {
                 ))
             }
             _ => Err(VinegarError::IncompatibleTypesError(format!(
-                "cannot perform arithemtic objects of type {}.",
-                self.type_name()
+                "operator \"+\" not valid for types {} and {}.",
+                self.type_name(),
+                other.type_name()
             ))),
         }
     }
@@ -182,8 +183,9 @@ impl VinegarObject {
                 _ => other.sub(self),
             },
             _ => Err(VinegarError::IncompatibleTypesError(format!(
-                "cannot perform arithemtic objects of type {}.",
-                self.type_name()
+                "operator \"-\" not valid for types {} and {}.",
+                self.type_name(),
+                other.type_name()
             ))),
         }
     }
@@ -193,16 +195,17 @@ impl VinegarObject {
             &VinegarObject::Int(i) => match other {
                 &VinegarObject::Int(other_i) => Ok(VinegarObject::Float(i as f64 / other_i as f64)),
                 VinegarObject::Float(other_f) => Ok(VinegarObject::Float(i as f64 / other_f)),
-                _ => other.mul(self),
+                _ => other.div(self),
             },
             &VinegarObject::Float(f) => match other {
                 &VinegarObject::Int(other_i) => Ok(VinegarObject::Float(f / other_i as f64)),
                 VinegarObject::Float(other_f) => Ok(VinegarObject::Float(f / other_f)),
-                _ => other.sub(self),
+                _ => other.div(self),
             },
             _ => Err(VinegarError::IncompatibleTypesError(format!(
-                "cannot perform arithemtic objects of type {}.",
-                self.type_name()
+                "operator \"/\" not valid for types {} and {}.",
+                self.type_name(),
+                other.type_name()
             ))),
         }
     }
@@ -394,18 +397,15 @@ impl VinegarObject {
             VinegarObject::Function(f) => format!(
                 "{}({})",
                 match f.body {
-                    FunctionBody::VinegarBody(..) => "vinegar_function",
-                    FunctionBody::RustWrapper(..) => "rust_function_wrapper",
+                    FunctionBody::VinegarBody(..) => "fn",
+                    FunctionBody::RustWrapper(..) => "<rust_function_wrapper>",
                 },
                 {
                     let mut rv = "".to_string();
                     let mut args_iter = f.args.iter().peekable();
                     loop {
                         let a = match args_iter.next() {
-                            Some(a) => {
-                                rv.push_str(", ");
-                                a
-                            }
+                            Some(a) => a,
                             None => break,
                         };
                         let arg_str = if let Some(dv) = &a.value {
@@ -414,6 +414,9 @@ impl VinegarObject {
                             format!("{}", a.name)
                         };
                         rv.push_str(&arg_str);
+                        if let Some(_) = args_iter.peek() {
+                            rv.push_str(", ");
+                        }
                     }
                     rv
                 }
@@ -633,7 +636,7 @@ impl VinegarRuntime {
                     None => (),
                 };
                 Err(Error::VinegarError(
-                    self.get_error_prefix(range.clone()),
+                    self.get_error_prefix(&range),
                     VinegarError::UnknownIdentifier(name.clone()),
                 ))
             }
@@ -643,10 +646,10 @@ impl VinegarRuntime {
                 {
                     Ok(v) => Ok(v),
                     Err(_) => Err(Error::VinegarError(
-                        self.get_error_prefix(range.clone()),
+                        self.get_error_prefix(&range),
                         VinegarError::VarAttributeNotFound(
                             value.type_name().to_string(),
-                            expr.debug_string(),
+                            expr.debug_string(&self.string_literals),
                             name.to_string(),
                         ),
                     )),
@@ -657,88 +660,93 @@ impl VinegarRuntime {
 
     fn interpret_literal(&mut self, literal: &Literal) -> Result<VinegarObject, Error> {
         match literal {
-            &Literal::Int(i) => Ok(VinegarObject::Int(i)),
-            &Literal::Float(f) => Ok(VinegarObject::Float(f)),
-            &Literal::String(s) => Ok(VinegarObject::String(s)),
-            &Literal::Bool(b) => Ok(VinegarObject::Bool(b)),
+            &Literal::Int(i, _) => Ok(VinegarObject::Int(i)),
+            &Literal::Float(f, _) => Ok(VinegarObject::Float(f)),
+            &Literal::String(s, _) => Ok(VinegarObject::String(s)),
+            &Literal::Bool(b, _) => Ok(VinegarObject::Bool(b)),
         }
     }
 
-    fn interpret_bin_op(&mut self, op: &Rc<BinaryOperator>) -> Result<VinegarObject, Error> {
-        let value_left = self.interpret_expression(&(&**op).left)?;
-        let value_right = self.interpret_expression(&(&**op).right)?;
-        match (&**op).op_type {
+    fn interpret_bin_op(&mut self, op: &BinaryOperator) -> Result<VinegarObject, Error> {
+        let value_left = self.interpret_expression(&op.left)?;
+        let value_right = self.interpret_expression(&op.right)?;
+        match op.op_type {
             BinaryOperatorType::Add => value_left
                 .add(
                     &value_right,
                     &mut self.string_literals,
                     &mut self.string_hasher,
                 )
-                .or_error(self.get_error_prefix(op.get_char_range())),
+                .or_error(self.get_error_prefix(&op.get_char_range())),
             BinaryOperatorType::Sub => value_left
                 .sub(&value_right)
-                .or_error(self.get_error_prefix(op.get_char_range())),
+                .or_error(self.get_error_prefix(&op.get_char_range())),
             BinaryOperatorType::Mul => value_left
                 .mul(&value_right)
-                .or_error(self.get_error_prefix(op.get_char_range())),
+                .or_error(self.get_error_prefix(&op.get_char_range())),
             BinaryOperatorType::Div => value_left
                 .div(&value_right)
-                .or_error(self.get_error_prefix(op.get_char_range())),
+                .or_error(self.get_error_prefix(&op.get_char_range())),
             BinaryOperatorType::And => value_left
                 .and(&value_right, &self.string_literals)
-                .or_error(self.get_error_prefix(op.get_char_range())),
+                .or_error(self.get_error_prefix(&op.get_char_range())),
             BinaryOperatorType::Or => value_left
                 .or(&value_right, &self.string_literals)
-                .or_error(self.get_error_prefix(op.get_char_range())),
+                .or_error(self.get_error_prefix(&op.get_char_range())),
         }
     }
 
-    fn interpret_un_op(&mut self, op: &Rc<UnaryOperator>) -> Result<VinegarObject, Error> {
+    fn interpret_un_op(&mut self, op: &UnaryOperator) -> Result<VinegarObject, Error> {
         let value = self.interpret_expression(&op.expr)?;
-        match (&**op).op_type {
-            UnaryOperatorType::Invert => Ok(value
+        match op.op_type {
+            UnaryOperatorType::Minus => Ok(value
                 .invert()
-                .or_error(self.get_error_prefix(op.get_char_range()))?),
+                .or_error(self.get_error_prefix(&op.get_char_range()))?),
             UnaryOperatorType::Not => {
                 let value = self.interpret_expression(&op.expr)?;
                 Ok(value
                     .not(&self.string_literals)
-                    .or_error(self.get_error_prefix(op.get_char_range()))?)
+                    .or_error(self.get_error_prefix(&op.get_char_range()))?)
             }
         }
     }
 
-    fn interpret_function_call(&mut self, f: &Rc<FunctionCall>) -> Result<VinegarObject, Error> {
+    fn interpret_function_call(&mut self, f: &FunctionCall) -> Result<VinegarObject, Error> {
         let func = self.interpret_expression(&f.expr)?;
         match &func {
             VinegarObject::Function(function) => {
-                let mut expected_args = function.args.clone();
+                let mut remaining_expected_args = function.args.clone();
                 let body = &function.body;
                 let mut function_scope = VinegarScope::new();
 
-                for (name_option, value) in &f.args {
-                    let name_index = match name_option {
-                        Some(name) => {
+                for arg in &f.args {
+                    let name_index = match &arg.debug_name {
+                        Some((name, range)) => {
                             let comparator = |key: &String, item: &FunctionArg| key.cmp(&item.name);
-                            match expected_args.binary_search_by(|item| comparator(name, item)) {
-                                Ok(index) => Ok(index),
-                                Err(_) => Err(VinegarError::InvalidArgumentsError(format!(
-                                    "invalid keyword argument for function {}: {}",
-                                    func.format_string(&self.string_literals)
-                                        .or_error(self.get_error_prefix(1..0))?,
-                                    name
-                                ))),
+                            match remaining_expected_args
+                                .binary_search_by(|item| comparator(name, item))
+                            {
+                                Ok(index) => index,
+                                Err(_) => {
+                                    return Err(VinegarError::InvalidArgumentsError(format!(
+                                        "invalid keyword argument for function {}: {}",
+                                        func.format_string(&self.string_literals)
+                                            .or_error(self.get_error_prefix(&range))?,
+                                        name
+                                    )))
+                                    .or_error(self.get_error_prefix(&range))
+                                }
                             }
                         }
                         None => {
                             let expected_args_len = function.args.len();
-                            if expected_args_len > 0 {
-                                Ok(0)
+                            if remaining_expected_args.len() > 0 {
+                                0
                             } else {
                                 let given_args_len = f.args.len();
-                                Err(VinegarError::InvalidArgumentsError(format!(
+                                return Err(VinegarError::InvalidArgumentsError(format!(
                                     "\"{}\" takes {} {}, but {} {} provided.",
-                                    f.expr.debug_string(),
+                                    f.expr.debug_string(&self.string_literals),
                                     expected_args_len,
                                     match expected_args_len {
                                         1 => "argument".to_string(),
@@ -750,24 +758,24 @@ impl VinegarRuntime {
                                         _ => "were".to_string(),
                                     },
                                 )))
+                                .or_error(self.get_error_prefix(&f.get_char_range()));
                             }
                         }
-                    }
-                    .or_error(self.get_error_prefix(1..0))?;
+                    };
 
-                    let owned_arg = expected_args.remove(name_index);
-                    function_scope.insert(owned_arg.name, self.interpret_expression(value)?);
+                    let owned_arg = remaining_expected_args.remove(name_index);
+                    function_scope.insert(owned_arg.name, self.interpret_expression(&arg.expr)?);
                 }
 
-                for arg in expected_args {
+                for arg in remaining_expected_args {
                     if let Some(v) = arg.value {
                         function_scope.insert(arg.name, v);
                     } else {
                         return Err(VinegarError::InvalidArgumentsError(format!(
-                            "too few arguments for {}",
-                            f.expr.debug_string()
+                            "too few arguments for \"{}\"",
+                            f.expr.debug_string(&self.string_literals)
                         )))
-                        .or_error(self.get_error_prefix(f.get_char_range()));
+                        .or_error(self.get_error_prefix(&f.get_char_range()));
                     }
                 }
 
@@ -783,7 +791,7 @@ impl VinegarRuntime {
                         ) {
                             Ok(result) => Ok(result),
                             Err(err) => Err(Error::VinegarError(
-                                self.get_error_prefix(f.expr.get_char_range()),
+                                self.get_error_prefix(&f.expr.get_char_range()),
                                 err,
                             )),
                         }
@@ -794,8 +802,8 @@ impl VinegarRuntime {
             }
             _ => {
                 return Err(Error::VinegarError(
-                    self.get_error_prefix(f.expr.get_char_range()),
-                    VinegarError::NotCallableError(f.expr.debug_string(), func.type_name().into()),
+                    self.get_error_prefix(&f.expr.get_char_range()),
+                    VinegarError::NotCallableError(f.expr.debug_string(&self.string_literals), func.type_name().into()),
                 ))
             }
         }
@@ -840,38 +848,15 @@ impl VinegarRuntime {
         ));
     }
 
-    fn get_error_prefix(&self, range: Range<usize>) -> String {
+    fn get_error_prefix(&self, range: &Range<usize>) -> String {
         self.get_error_prefix_for_debug_info(&self.debug_info, range)
     }
 
     fn get_error_prefix_for_debug_info(
         &self,
         debug_info: &DebugInfo,
-        range: Range<usize>,
+        range: &Range<usize>,
     ) -> String {
-        if let None = self.debug_info.source {
-            return "".to_string();
-        }
-
-        let mut line = 0;
-        let mut column = 0;
-        let s: &String = debug_info
-            .source
-            .as_ref()
-            .expect("suddenly there was no string");
-        for char in s.chars().take(range.start) {
-            column += 1;
-            if char == '\n' {
-                line += 1;
-                column = 0;
-            }
-        }
-
-        let file_info = format!("in {},", debug_info.source_name,);
-
-        if range.start > range.end {
-            return format!("{} unknown position:", file_info);
-        }
-        format!("{} line {}, column {}:", file_info, line + 1, column + 1,)
+        get_error_prefix(&debug_info, range)
     }
 }

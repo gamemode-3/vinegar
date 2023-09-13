@@ -1,3 +1,5 @@
+use colored::Colorize;
+use std::ops::Range;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -125,4 +127,69 @@ impl DebugInfo {
             source_name: source_name,
         }
     }
+}
+
+pub fn get_error_prefix(debug_info: &DebugInfo, range: &Range<usize>) -> String {
+    if let None = debug_info.source {
+        return "".to_string();
+    }
+
+    let mut line = 0;
+    let mut column = 0;
+    let mut column_start = 0;
+    let s: &String = debug_info
+        .source
+        .as_ref()
+        .expect("suddenly there was no string");
+    for (i, char) in s.chars().take(range.start).enumerate() {
+        column += 1;
+        if char == '\n' {
+            line += 1;
+            column = 0;
+            column_start = i + 1;
+        }
+    }
+    let mut column_end = range.start + 1;
+    let mut chars = s.chars();
+    chars.nth(range.start);
+    loop {
+        match chars.next() {
+            None => break,
+            Some('\n') => {
+                break;
+            }
+            Some(_) => {
+                column_end += 1;
+            }
+        }
+    }
+
+    let file_info = format!("in {},", debug_info.source_name,);
+
+    if range.start >= range.end {
+        return format!("{} unknown position:", file_info);
+    }
+
+    let indent = 4;
+
+    let mut rv = format!("{} line {}, column {}:", file_info, line + 1, column + 1,);
+    rv = format!(
+        "{}\n\n{}{}",
+        rv,
+        " ".repeat(indent),
+        s[column_start..column_end].to_string()
+    );
+
+    let squiggle_start = range.start - column_start + indent;
+    let squiggle_len = range.end - range.start;
+
+    rv = format!(
+        "{}\n{}{}",
+        rv,
+        " ".repeat(squiggle_start),
+        "~".repeat(squiggle_len).bold().bright_red()
+    );
+
+    rv = format!("{}\n", rv);
+    rv
 }

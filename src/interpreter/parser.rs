@@ -1,4 +1,4 @@
-use super::debug::{DebugInfo, Error, FileOrOtherError, ParserError};
+use super::debug::{get_error_prefix, DebugInfo, Error, FileOrOtherError, ParserError};
 use super::iter::{CanConcatenate, SingleItemIterator};
 use super::lexer::{DebugToken, Lexer, Token};
 use super::string_literal_map::{MapStringLiterals, StringLiteralMap};
@@ -101,48 +101,60 @@ pub struct CodeBody {
 
 #[derive(Debug, Clone)]
 pub enum Literal {
-    String(u64),
-    Int(i64),
-    Float(f64),
-    Bool(bool),
+    String(u64, Range<usize>),
+    Int(i64, Range<usize>),
+    Float(f64, Range<usize>),
+    Bool(bool, Range<usize>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UnaryOperator {
     pub op_type: UnaryOperatorType,
-    pub expr: Expression,
+    pub op_range: Range<usize>,
+    pub expr: Rc<Expression>,
 }
 
 impl UnaryOperator {
-    pub fn new(op_type: UnaryOperatorType, expr: Expression) -> Self {
-        UnaryOperator { op_type, expr }
-    }
-}
-
-#[derive(Debug)]
-pub enum UnaryOperatorType {
-    Not,
-    Invert,
-}
-
-#[derive(Debug)]
-pub struct BinaryOperator {
-    pub op_type: BinaryOperatorType,
-    pub left: Expression,
-    pub right: Expression,
-}
-
-impl BinaryOperator {
-    pub fn new(op_type: BinaryOperatorType, left: Expression, right: Expression) -> Self {
-        BinaryOperator {
+    pub fn new(op_type: UnaryOperatorType, op_range: Range<usize>, expr: Expression) -> Self {
+        UnaryOperator {
             op_type,
-            left,
-            right,
+            op_range,
+            expr: Rc::new(expr),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub enum UnaryOperatorType {
+    Not,
+    Minus,
+}
+
+#[derive(Debug, Clone)]
+pub struct BinaryOperator {
+    pub op_type: BinaryOperatorType,
+    pub op_range: Range<usize>,
+    pub left: Rc<Expression>,
+    pub right: Rc<Expression>,
+}
+
+impl BinaryOperator {
+    pub fn new(
+        op_type: BinaryOperatorType,
+        op_range: Range<usize>,
+        left: Expression,
+        right: Expression,
+    ) -> Self {
+        BinaryOperator {
+            op_type,
+            op_range,
+            left: Rc::new(left),
+            right: Rc::new(right),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum BinaryOperatorType {
     Add,
     Sub,
@@ -170,22 +182,27 @@ impl BinaryOperator {
             Token::Minus => Some(BinaryOperatorType::Sub),
             Token::Star => Some(BinaryOperatorType::Mul),
             Token::Slash => Some(BinaryOperatorType::Div),
-            Token::Word(w) => {
-                match w.as_str() {
-                    "and" => Some(BinaryOperatorType::And),
-                    "or" => Some(BinaryOperatorType::Or),
-                    _ => None
-                }
+            Token::Word(w) => match w.as_str() {
+                "and" => Some(BinaryOperatorType::And),
+                "or" => Some(BinaryOperatorType::Or),
+                _ => None,
             },
             _ => None,
         }
     }
 }
 
-#[derive(Debug)]
-pub struct FunctionCall {
+#[derive(Debug, Clone)]
+pub struct FunctionCallArg {
+    pub debug_name: Option<(String, Range<usize>)>,
     pub expr: Expression,
-    pub args: Vec<(Option<String>, Expression)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionCall {
+    pub expr: Rc<Expression>,
+    pub args: Vec<FunctionCallArg>,
+    pub char_range: Range<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -198,32 +215,119 @@ pub enum Indentifier {
 pub enum Expression {
     Literal(Literal),
     Identifier(Indentifier),
-    UnaryOperator(Rc<UnaryOperator>),
-    BinaryOperator(Rc<BinaryOperator>),
-    FunctionCall(Rc<FunctionCall>),
+    UnaryOperator(UnaryOperator),
+    BinaryOperator(BinaryOperator),
+    FunctionCall(FunctionCall),
 }
 
 pub trait DebugString {
-    fn debug_string(&self) -> String;
+    fn debug_string(&self, string_literals: &StringLiteralMap) -> String;
 }
 
 impl DebugString for Expression {
-    fn debug_string(&self) -> String {
+    fn debug_string(&self, string_literals: &StringLiteralMap) -> String {
         match self {
-            Expression::Identifier(i) => i.debug_string(),
-            _ => format!("{:?}", self),
+            Expression::Identifier(i) => i.debug_string(string_literals),
+            Expression::Literal(l) => l.debug_string(string_literals),
+            Expression::BinaryOperator(b) => b.debug_string(string_literals),
+            Expression::FunctionCall(f) => f.debug_string(string_literals),
+            Expression::UnaryOperator(u) => u.debug_string(string_literals),
         }
     }
 }
 
 impl DebugString for Indentifier {
-    fn debug_string(&self) -> String {
+    fn debug_string(&self, _: &StringLiteralMap) -> String {
         match self {
             Indentifier::Member(name, member, _) => {
                 format!("{}.{:?}", name, member)
             }
             Indentifier::Final(name, _) => format!("{}", name),
         }
+    }
+}
+
+impl DebugString for Literal {
+    fn debug_string(&self, string_literals: &StringLiteralMap) -> String {
+        match self {
+            Literal::Int(i, _) => format!("{}", i),
+            Literal::Float(f, _) => format!("{}", f),
+            Literal::Bool(b, _) => format!("{}", b),
+            Literal::String(s, _) => format!("{:?}", string_literals.get(s)),
+        }
+    }
+}
+
+impl DebugString for UnaryOperator {
+    fn debug_string(&self, string_literals: &StringLiteralMap) -> String {
+        let expr = match self.expr.as_ref() {
+            Expression::BinaryOperator(b) => format!("({})", b.debug_string(string_literals)),
+            _ => self.expr.debug_string(string_literals),
+        };
+        match self.op_type {
+            UnaryOperatorType::Not => format!("not {}", expr),
+            UnaryOperatorType::Minus => format!("-{}", expr),
+        }
+    }
+}
+
+impl DebugString for BinaryOperator {
+    fn debug_string(&self, string_literals: &StringLiteralMap) -> String {
+        let left = match self.left.as_ref() {
+            Expression::BinaryOperator(b) => {
+                if BinaryOperator::get_precedence(&self.op_type)
+                    > BinaryOperator::get_precedence(&b.op_type)
+                {
+                    b.debug_string(string_literals);
+                }
+                format!("({})", b.debug_string(string_literals))
+            }
+            _ => self.left.debug_string(string_literals),
+        };
+        let right = match self.right.as_ref() {
+            Expression::BinaryOperator(b) => {
+                if BinaryOperator::get_precedence(&self.op_type)
+                    > BinaryOperator::get_precedence(&b.op_type)
+                {
+                    b.debug_string(string_literals);
+                }
+                format!("({})", b.debug_string(string_literals))
+            }
+            _ => self.right.debug_string(string_literals),
+        };
+        match self.op_type {
+            BinaryOperatorType::Add => format!("{} + {}", left, right),
+            BinaryOperatorType::Sub => format!("{} - {}", left, right),
+            BinaryOperatorType::Mul => format!("{} * {}", left, right),
+            BinaryOperatorType::Div => format!("{} / {}", left, right),
+            BinaryOperatorType::And => format!("{} && {}", left, right),
+            BinaryOperatorType::Or => format!("{} || {}", left, right),
+        }
+    }
+}
+
+impl DebugString for FunctionCall {
+    fn debug_string(&self, string_literals: &StringLiteralMap) -> String {
+        let expr = match self.expr.as_ref() {
+            Expression::BinaryOperator(b) => format!("({})", b.debug_string(string_literals)),
+            Expression::UnaryOperator(u) => format!("({})", u.debug_string(string_literals)),
+            _ => self.expr.debug_string(string_literals),
+        };
+        format!(
+            "{}({})",
+            expr,
+            self.args
+                .iter()
+                .map(|a| a.debug_string(string_literals))
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    }
+}
+
+impl DebugString for FunctionCallArg {
+    fn debug_string(&self, string_literals: &StringLiteralMap) -> String {
+        format!("{}", self.expr.debug_string(string_literals))
     }
 }
 
@@ -254,25 +358,30 @@ impl GetCharRange for Indentifier {
 
 impl GetCharRange for Literal {
     fn get_char_range(&self) -> Range<usize> {
-        1..0
+        match self {
+            Literal::Int(_, range) => range.clone(),
+            Literal::Float(_, range) => range.clone(),
+            Literal::Bool(_, range) => range.clone(),
+            Literal::String(_, range) => range.clone(),
+        }
     }
 }
 
 impl GetCharRange for UnaryOperator {
     fn get_char_range(&self) -> Range<usize> {
-        1..0
+        self.op_range.start..self.expr.get_char_range().end
     }
 }
 
 impl GetCharRange for BinaryOperator {
     fn get_char_range(&self) -> Range<usize> {
-        1..0
+        self.left.get_char_range().start..self.right.get_char_range().end
     }
 }
 
 impl GetCharRange for FunctionCall {
     fn get_char_range(&self) -> Range<usize> {
-        1..0
+        self.char_range.clone()
     }
 }
 
@@ -284,19 +393,19 @@ impl From<Literal> for Expression {
 
 impl From<UnaryOperator> for Expression {
     fn from(value: UnaryOperator) -> Self {
-        Expression::UnaryOperator(Rc::new(value))
+        Expression::UnaryOperator(value)
     }
 }
 
 impl From<BinaryOperator> for Expression {
     fn from(value: BinaryOperator) -> Self {
-        Expression::BinaryOperator(Rc::new(value))
+        Expression::BinaryOperator(value)
     }
 }
 
 impl From<FunctionCall> for Expression {
     fn from(value: FunctionCall) -> Self {
-        Expression::FunctionCall(Rc::new(value))
+        Expression::FunctionCall(value)
     }
 }
 
@@ -706,12 +815,12 @@ impl Parser {
         //     consume and save it
         //     continue by evaluating the next expression
         loop {
-            let next = match self.peek_token() {
+            let next = match self.peek() {
                 Some(token) => token,
                 None => break,
             };
-            let op_type = match BinaryOperator::get_operator_type(next) {
-                Some(op_type) => op_type,
+            let (op_type, op_range) = match BinaryOperator::get_operator_type(&next.token) {
+                Some(op_type) => (op_type, next.char_range.clone()),
                 None => break,
             };
             let op_prec = BinaryOperator::get_precedence(&op_type);
@@ -721,7 +830,7 @@ impl Parser {
             self.next();
 
             a = match self.next_expression(op_prec + 1)? {
-                Some(b) => Expression::from(BinaryOperator::new(op_type, a, b)),
+                Some(b) => Expression::from(BinaryOperator::new(op_type, op_range, a, b)),
                 None => {
                     return Err(Error::ParserError(
                         self.get_error_prefix(),
@@ -738,7 +847,11 @@ impl Parser {
     }
 
     fn next_function_call(&mut self, a: Expression) -> Result<Expression, Error> {
-        let mut all_args = vec![];
+        let mut keyword_args = vec![];
+        let mut positional_args = vec![];
+
+        let start_char_pos = a.get_char_range().start;
+
         self.paren_depth += 1;
         loop {
             self.next();
@@ -750,17 +863,38 @@ impl Parser {
 
             match self.peek_n_token(1) {
                 Some(Token::Colon) => {
-                    let name = expect_token!(
-                        self, self.next_token(),
-                        Token::Word(w) => w;
-                        "expected keyword argument name before colon"
-                    )
+                    let name_debug = expect_any_token!(
+                        self, self.next(),
+                        a => a;
+                        "expected keyword argument name before colon."
+                    );
+                    let debug_range = name_debug.char_range.clone();
+
+                    let name = match &name_debug.token {
+                        Token::Word(name) => name,
+                        t => {
+                            let token_string = t.simple_string();
+                            return Err(Error::ParserError(
+                                self.get_error_prefix(),
+                                ParserError::UnexpectedTokenError(
+                                    token_string,
+                                    "expected keyword argument name before colon.".to_string(),
+                                ),
+                            ));
+                        }
+                    }
                     .clone();
                     self.next();
                     let expr = expect_expression!(self);
-                    all_args.push((Some(name), expr));
+                    keyword_args.push(FunctionCallArg {
+                        debug_name: Some((name, debug_range)),
+                        expr: expr,
+                    });
                 }
-                _ => all_args.push((None, expect_expression!(self))),
+                _ => positional_args.push(FunctionCallArg {
+                    debug_name: None,
+                    expr: expect_expression!(self),
+                }),
             };
             expect_token!(self, self.peek_token(),
                 Token::Comma => {
@@ -771,10 +905,13 @@ impl Parser {
             )
         }
         self.paren_depth -= 1;
-        self.next();
+        let ending_paren = self.next().unwrap();
+        let mut all_args = keyword_args;
+        all_args.extend(positional_args);
         return Ok(Expression::from(FunctionCall {
-            expr: a,
+            expr: Rc::new(a),
             args: all_args,
+            char_range: start_char_pos..ending_paren.char_range.end,
         }));
     }
 
@@ -812,55 +949,61 @@ impl Parser {
     }
 
     fn next_atomic_expression(&mut self) -> Result<Option<Expression>, Error> {
-        match self.next_token() {
-            Some(Token::Word(w)) => {
+        let next_debug = self.next();
+        let (next_token, next_range) = match next_debug {
+            Some(d) => (&d.token, d.char_range.clone()),
+            None => return Ok(None),
+        };
+        match next_token {
+            Token::Word(w) => {
                 let word = w.to_string();
-                return self.next_word(word);
+                return self.next_word(word, next_range);
             }
-            Some(Token::StringLiteral(w)) => {
+            Token::StringLiteral(w) => {
                 let string = w.to_string();
                 let hash = self
                     .string_literals
                     .add_lit(string, &mut self.string_hasher);
-                Ok(Some(Expression::from(Literal::String(hash))))
+                Ok(Some(Expression::from(Literal::String(hash, next_range))))
             }
-            Some(Token::ParenOpen) => {
+            Token::ParenOpen => {
                 self.paren_depth += 1;
                 let rv = self.next_expression(0);
                 self.paren_depth -= 1;
                 self.next();
                 rv
             }
-            Some(Token::Minus) => {
+            Token::Minus => {
                 let expr = expect_atomic_expression!(self);
                 Ok(Some(Expression::from(UnaryOperator::new(
-                    UnaryOperatorType::Invert,
+                    UnaryOperatorType::Minus,
+                    next_range,
                     expr,
                 ))))
             }
-            _ => {
-                return Err(Error::ParserError(
-                    self.get_error_prefix(),
-                    ParserError::UnexpectedEndOfStatementError("".into()),
-                ))
-            }
+            _ => Ok(None),
         }
     }
 
-    fn next_word(&mut self, word: String) -> Result<Option<Expression>, Error> {
+    fn next_word(
+        &mut self,
+        word: String,
+        range: Range<usize>,
+    ) -> Result<Option<Expression>, Error> {
         if word == "not" {
             let expr = expect_atomic_expression!(self);
             return Ok(Some(Expression::from(UnaryOperator::new(
                 UnaryOperatorType::Not,
+                range,
                 expr,
             ))));
         }
 
         if word == "true" {
-            return Ok(Some(Expression::from(Literal::Bool(true))));
+            return Ok(Some(Expression::from(Literal::Bool(true, range))));
         }
         if word == "false" {
-            return Ok(Some(Expression::from(Literal::Bool(false))));
+            return Ok(Some(Expression::from(Literal::Bool(false, range))));
         }
 
         if let Ok(value) = word.parse() {
@@ -871,7 +1014,7 @@ impl Parser {
                     full_str.push('.');
                     full_str.push_str(frac);
                     return match full_str.parse() {
-                        Ok(value) => Ok(Some(Expression::from(Literal::Float(value)))),
+                        Ok(value) => Ok(Some(Expression::from(Literal::Float(value, range)))),
                         Err(_) => Err(Error::ParserError(
                             self.get_error_prefix(),
                             ParserError::InvalidLiteralError(
@@ -882,7 +1025,7 @@ impl Parser {
                     };
                 }
             }
-            return Ok(Some(Expression::from(Literal::Int(value))));
+            return Ok(Some(Expression::from(Literal::Int(value, range))));
         }
 
         if word.ends_with("e") && word[..word.len() - 1].is_numeric() {
@@ -901,9 +1044,12 @@ impl Parser {
                             self.next();
                             self.next();
                             if value.can_be_int() {
-                                return Ok(Some(Expression::from(Literal::Int(value as i64))));
+                                return Ok(Some(Expression::from(Literal::Int(
+                                    value as i64,
+                                    range,
+                                ))));
                             }
-                            return Ok(Some(Expression::from(Literal::Float(value))));
+                            return Ok(Some(Expression::from(Literal::Float(value, range))));
                         }
                     }
                     None => (),
@@ -925,7 +1071,7 @@ impl Parser {
             }
             let rest_word = &word[k.len()..];
             if let Ok(value) = i64::from_str_radix(rest_word, LITERAL_PREFIXES[k]) {
-                return Ok(Some(Expression::from(Literal::Int(value))));
+                return Ok(Some(Expression::from(Literal::Int(value, range))));
             }
             return Err(Error::ParserError(
                 self.get_error_prefix(),
@@ -946,7 +1092,7 @@ impl Parser {
                 if let Ok(base) = base_str.parse() {
                     if let Some(literal) = remaining_word_iter.next() {
                         if let Ok(value) = i64::from_str_radix(literal, base) {
-                            return Ok(Some(Expression::from(Literal::Int(value))));
+                            return Ok(Some(Expression::from(Literal::Int(value, range))));
                         }
                     }
                 }
@@ -1129,39 +1275,11 @@ impl Parser {
     }
 
     fn get_error_prefix(&self) -> String {
-        if let None = self.debug_info.source {
-            return "".to_string();
-        }
-
-        let mut line = 0;
-        let mut column = 0;
-        let s: &String = &self
-            .debug_info
-            .source
-            .as_ref()
-            .expect("suddenly there was no string");
-        let prev_debug_token = if self.pointer == 0 {
-            self.peek()
-        } else {
-            self.prev()
+        let range = match self.prev() {
+            Some(t) => &t.char_range,
+            None => &(1..0),
         };
-        let iter: Box<dyn Iterator<Item = char>> = match prev_debug_token {
-            Some(t) => Box::new(s.chars().take(t.char_range.start)),
-            None => Box::new(s.chars()),
-        };
-        for char in iter {
-            column += 1;
-            if char == '\n' {
-                line += 1;
-                column = 0;
-            }
-        }
 
-        format!(
-            "in {}, line {}, column {}:",
-            self.debug_info.source_name,
-            line + 1,
-            column + 1,
-        )
+        get_error_prefix(&self.debug_info, range)
     }
 }

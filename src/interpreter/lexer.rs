@@ -1,5 +1,5 @@
 extern crate lazy_static;
-use super::debug::{FileOrOtherError, LexerError};
+use super::debug::{FileOrOtherError, LexerError, get_error_prefix};
 use super::{debug::DebugInfo, debug::Error};
 use crate::{debug, file_handler};
 use lazy_static::lazy_static;
@@ -373,21 +373,7 @@ impl Lexer {
     }
 
     fn get_error_prefix(&self) -> String {
-        let mut line = 0;
-        let mut column = 0;
-        for &char in self.string.iter().take(self.pointer) {
-            column += 1;
-            if char == '\n' {
-                line += 1;
-                column = 0;
-            }
-        }
-
-        format!(
-            "in {}, line {}, column {}:",
-            self.debug_info.source_name,
-            line + 1,
-            column
-        )
+        let range = self.pointer..(self.pointer + 1);
+        get_error_prefix(&self.debug_info, &range)
     }
 }

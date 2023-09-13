@@ -5,9 +5,10 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1"
-lazy_static = "1.4"
-unescaper = "0.1.2"
-regex = "1.9.5"
+lazy_static = "1"
+unescaper = "0.1"
+regex = "1.9"
+colored = "2"
 
 rust_struct_wrapper_macro = { path = "rust_struct_wrapper_macro" }
 

@@ -1,10 +1,10 @@
-def get_name(
-    object, message: "default"
-):
+def get_name(object, message: "default"):
     print(message, "\n")
     object.name
 
 
 
  
-a = Duck("Tom", 39, 3.3)
+a = Duck("Tom", 3.5, height_in_cm: 34)
+
+print(get_name(a))

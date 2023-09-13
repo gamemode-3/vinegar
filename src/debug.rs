@@ -57,7 +57,6 @@ fn format_parens_recurse(s: &str, indent: usize, max_substr_len: usize) -> (Vec<
             None => break,
         };
         pointer = i;
-        // println!("{}, {}", pointer, format!("{:?}", string_chars.nth(pointer)));
         if OPEN_PAREN.contains(&this_char) {
             current_string.push(this_char);
             let (substring, chars_consumed) =
