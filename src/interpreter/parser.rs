@@ -13,10 +13,10 @@ use std::rc::Rc;
 use std::vec;
 
 macro_rules! expect_token {
-    ($self:expr, $token_source:expr, $($pattern:pat => $result:expr),* $(,)?; $msg:expr) => {
+    ($self:expr, $token_source:expr, $($pattern:pat $(if $cond:expr)? => $result:expr),* $(,)?; $msg:expr) => {
         match $token_source {
             $(
-                Some($pattern) => $result,
+                Some($pattern) $(if $cond)? => $result,
             )*
             Some(t) => {
                 let token_str = t.simple_string();
@@ -39,10 +39,10 @@ macro_rules! expect_token {
 }
 
 macro_rules! expect_any_token {
-    ($self:expr, $token_source:expr, $($pattern:pat => $result:expr),* $(,)?; $msg:expr) => {
+    ($self:expr, $token_source:expr, $($pattern:pat $(if $cond:expr)? => $result:expr),* $(,)?; $msg:expr) => {
         match $token_source {
             $(
-                Some($pattern) => $result,
+                Some($pattern) $(if $cond)? => $result,
             )*
             _ => {
                 return Err(Error::ParserError(
@@ -436,10 +436,30 @@ pub struct FunctionDefinition {
 }
 
 #[derive(Debug, Clone)]
+pub enum ElseBody {
+    If(Rc<If>),
+    CodeBody(CodeBody),
+}
+
+#[derive(Debug, Clone)]
+pub struct If {
+    pub condition: Expression,
+    pub if_body: CodeBody,
+    pub else_body: Option<ElseBody>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Return {
+    pub value: Option<Expression>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Statement {
     Expression(Expression),
     Assignment(Assignment),
     FunctionDefinition(FunctionDefinition),
+    If(If),
+    Return(Return),
 }
 
 impl From<Expression> for Statement {
@@ -457,6 +477,18 @@ impl From<Assignment> for Statement {
 impl From<FunctionDefinition> for Statement {
     fn from(value: FunctionDefinition) -> Self {
         Statement::FunctionDefinition(value)
+    }
+}
+
+impl From<If> for Statement {
+    fn from(value: If) -> Self {
+        Statement::If(value)
+    }
+}
+
+impl From<Return> for Statement {
+    fn from(value: Return) -> Self {
+        Statement::Return(value)
     }
 }
 
@@ -503,7 +535,7 @@ pub struct ParserResult {
 impl Debug for ParserResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let tree_string = format!("{:?}", self.tree_root);
-        let pattern = r#"Literal\(String\((\d+)\)\)"#;
+        let pattern = r#"Literal\(String\((\d+),"#;
         let re = Regex::new(pattern).unwrap();
         let result = re
             .replace_all(&tree_string, |caps: &regex::Captures| {
@@ -511,7 +543,7 @@ impl Debug for ParserResult {
                     if let Ok(number) = number_match.as_str().parse::<u64>() {
                         if let Some(value) = self.string_literals.get(&number) {
                             return format!(
-                                "Literal(String(<\"{}\"> {}))",
+                                "Literal(String(<\"{}\"> {},",
                                 value.escape_default(),
                                 number
                             );
@@ -655,13 +687,21 @@ impl Parser {
         };
 
         if let Token::Word(first_word) = next_token {
-            // check for function definition pattern "WORD(def) WORD PAREN_OPEN"
+            // check for function definition pattern
             if first_word == "def" {
                 return self.next_function_definition(indent);
             }
-        }
 
-        if let Token::Word(first_word) = next_token {
+            // check for if statement pattern
+            if first_word == "if" {
+                return self.next_if_statement(indent);
+            }
+
+            // check for return statement pattern
+            if first_word == "return" {
+                return self.next_return();
+            }
+
             // check for assignment pattern "WORD EQUALS ..."
             let word = first_word.to_string();
             if let Some(Token::Equals) = self.peek_n_token(1) {
@@ -676,6 +716,16 @@ impl Parser {
                 ParserError::UnexpectedEndOfStatementError("expected a statement.".into()),
             )),
         };
+    }
+
+    fn next_assignment(&mut self, identifier: String) -> Result<Assignment, Error> {
+        self.next();
+        self.next();
+        let expression = expect_expression!(self);
+        return Ok(Assignment {
+            name: identifier,
+            value: expression,
+        });
     }
 
     fn next_function_definition(&mut self, indent: usize) -> Result<Option<Statement>, Error> {
@@ -767,14 +817,88 @@ impl Parser {
         ));
     }
 
-    fn next_assignment(&mut self, identifier: String) -> Result<Assignment, Error> {
+    fn next_if_statement(&mut self, indent: usize) -> Result<Option<Statement>, Error> {
+        Ok(Some(Statement::from(self.next_if(indent)?)))
+    }
+
+    fn next_if(&mut self, indent: usize) -> Result<If, Error> {
         self.next();
-        self.next();
-        let expression = expect_expression!(self);
-        return Ok(Assignment {
-            name: identifier,
-            value: expression,
+        let condition = expect_expression!(self);
+        expect_token!(
+            self, self.next_token(),
+            Token::Colon => ();
+            "expected colon."
+        );
+        let mut next_indent = expect_token!(
+            self, self.next_token(),
+            Token::NewLine(n) => n.indent;
+            "expected new line."
+        );
+        while let Some(Token::NewLine(n)) = self.peek_token() {
+            next_indent = n.indent; // TODO remove this
+        }
+        if next_indent <= indent {
+            return Err(Error::ParserError(
+                self.get_error_prefix(),
+                ParserError::ExpectedIndentError(
+                    "expected indented block for if statement.".into(),
+                ),
+            ));
+        }
+        let if_body = self.next_code_body(next_indent)?;
+        let mut else_body = None;
+        let next_indent = match self.peek_token() {
+            Some(Token::NewLine(n)) => n.indent,
+            Some(t) => return Err(Error::ParserError(
+                self.get_error_prefix(),
+                ParserError::UnexpectedTokenError(t.simple_string(), "expected new line.".into()),
+            )),
+            None => 0,
+        };
+        if next_indent < indent {
+            return Ok(If {
+                condition,
+                if_body,
+                else_body,
+            });
+        }
+        if next_indent > indent {
+            return Err(Error::ParserError(
+                self.get_error_prefix(),
+                ParserError::UnexpectedIndentError(),
+            ));
+        }
+        if let Some(Token::Word(w)) = self.peek_n_token(1) {
+            if w == "else" {
+                self.move_n(2);
+                else_body = Some(self.next_else(indent)?);
+            }
+        }
+        return Ok(If {
+            condition,
+            if_body,
+            else_body,
         });
+    }
+
+    fn next_else(&mut self, indent: usize) -> Result<ElseBody, Error> {
+        expect_token!(
+            self, self.peek_token(),
+            Token::Word(w) if w == "if" => {
+                return Ok(ElseBody::If(Rc::new(self.next_if(indent)?)));
+            },
+            Token::Colon => {
+                self.next();
+                return Ok(ElseBody::CodeBody(self.next_code_body(indent)?));
+            };
+            "expected \"if\" or colon."
+        );
+    }
+
+    fn next_return(&mut self) -> Result<Option<Statement>, Error> {
+        self.next();
+        let value = self.next_expression(0)?;
+        Ok(Some(Statement::from(Return { value })))
     }
 
     fn next_expression(&mut self, min_prec: usize) -> Result<Option<Expression>, Error> {

@@ -74,13 +74,22 @@ fn format_parens_recurse(s: &str, indent: usize, max_substr_len: usize) -> (Vec<
                     indent_string.push(' ');
                 }
                 current_string.push_str(&indent_string);
-                current_string.push_str(&substring.join(&format!(",\n{}", indent_string)));
+                let joined_str = &substring.join(&format!(",\n{}", indent_string));
+                let stripped_str = match joined_str.strip_prefix(" ") {
+                    Some(s) => s,
+                    None => &joined_str,
+                };
+                current_string.push_str(stripped_str);
                 current_string.push('\n');
                 for _ in 0..((indent) * 4) {
                     current_string.push(' ');
                 }
             } else {
-                current_string.push_str(&substring.join(", "));
+                let mut joined_str = substring.join(", ");
+                if let Some(stripped_str) = joined_str.strip_prefix(" ") {
+                    joined_str = stripped_str.to_string();
+                }
+                current_string.push_str(&joined_str);
             }
             current_string.push(closing_paren)
         } else if CLOSE_PAREN.contains(&this_char) {

@@ -1,5 +1,5 @@
 extern crate lazy_static;
-use super::debug::{FileOrOtherError, LexerError, get_error_prefix};
+use super::debug::{get_error_prefix, FileOrOtherError, LexerError};
 use super::{debug::DebugInfo, debug::Error};
 use crate::{debug, file_handler};
 use lazy_static::lazy_static;
@@ -18,6 +18,14 @@ lazy_static! {
 }
 
 lazy_static! {
+    static ref WORD_ENTRY_CHARS: HashSet<char> = {
+        let mut set = HashSet::new();
+        set.insert('_');
+        set.insert('#');
+        set
+    };
+}
+lazy_static! {
     static ref WORD_CHARS: HashSet<char> = {
         let mut set = HashSet::new();
         set.insert('_');
@@ -26,6 +34,12 @@ lazy_static! {
     };
 }
 
+lazy_static! {
+    static ref NUM_ENTRY_CHARS: HashSet<char> = {
+        let set = HashSet::new();
+        set
+    };
+}
 lazy_static! {
     static ref NUM_CHARS: HashSet<char> = {
         let mut set = HashSet::new();
@@ -85,13 +99,23 @@ pub struct DebugToken {
 }
 
 trait VinegarChar {
+    fn enter_word_char_alphanum(&self) -> bool;
     fn is_word_char_alphanum(&self) -> bool;
+    fn enter_word_char_num(&self) -> bool;
     fn is_word_char_num(&self) -> bool;
 }
 
 impl VinegarChar for char {
+    fn enter_word_char_alphanum(&self) -> bool {
+        self.is_alphanumeric() || WORD_ENTRY_CHARS.contains(self)
+    }
+
     fn is_word_char_alphanum(&self) -> bool {
         self.is_alphanumeric() || WORD_CHARS.contains(self)
+    }
+
+    fn enter_word_char_num(&self) -> bool {
+        self.is_numeric() || NUM_ENTRY_CHARS.contains(self)
     }
 
     fn is_word_char_num(&self) -> bool {
@@ -176,7 +200,18 @@ impl Lexer {
                 continue;
             }
             if let Some(token) = self.next_token(current)? {
-                all_tokens.push(token);
+                match &token.token {
+                    Token::NewLine(n) => {
+                        if let Token::NewLine(prev_newline) =
+                            &mut all_tokens.last_mut().unwrap().token
+                        {
+                            prev_newline.indent = n.indent;
+                        } else {
+                            all_tokens.push(token);
+                        }
+                    }
+                    _ => all_tokens.push(token),
+                }
             }
         }
 
@@ -185,9 +220,9 @@ impl Lexer {
 
     fn next_token(&mut self, first: char) -> Result<Option<DebugToken>, Error> {
         let start_pointer = self.pointer;
-        if first.is_word_char_num() {
+        if first.enter_word_char_num() {
             Ok(Some(self.next_number(start_pointer)?))
-        } else if first.is_word_char_alphanum() {
+        } else if first.enter_word_char_alphanum() {
             self.next_word(start_pointer)
         } else if first == '\n' {
             self.next();

@@ -6,10 +6,12 @@ use std::{
 };
 
 use crate::file_handler;
+use crate::interpreter::parser::ElseBody;
 
 use super::debug::{get_error_prefix, OrError};
 use super::parser::{
-    BinaryOperatorType, DebugString, GetCharRange, ParserResult, UnaryOperator, UnaryOperatorType,
+    BinaryOperatorType, DebugString, GetCharRange, If, ParserResult, Return, UnaryOperator,
+    UnaryOperatorType,
 };
 use super::string_literal_map::StringLiteralMap;
 use super::{
@@ -520,11 +522,65 @@ where
 
 pub type VinegarScope = HashMap<String, VinegarObject>;
 
+struct VinegarScopeStack {
+    lifetime_stack: Vec<VinegarScope>,
+}
+
+impl VinegarScopeStack {
+    fn new() -> Self {
+        Self {
+            lifetime_stack: vec![VinegarScope::new()],
+        }
+    }
+
+    fn get_mut(&mut self, name: &String) -> Option<&mut VinegarObject> {
+        for lifetime in self.lifetime_stack.iter_mut().rev() {
+            match lifetime.get_mut(name) {
+                Some(v) => return Some(v),
+                None => (),
+            }
+        }
+        return None;
+    }
+
+    fn get(&self, name: &String) -> Option<&VinegarObject> {
+        for lifetime in self.lifetime_stack.iter().rev() {
+            match lifetime.get(name) {
+                Some(v) => return Some(v),
+                None => (),
+            }
+        }
+        return None;
+    }
+
+    fn insert(&mut self, name: String, value: VinegarObject) {
+        self.lifetime_stack.last_mut().unwrap().insert(name, value);
+    }
+
+    fn add_scope(&mut self) {
+        self.lifetime_stack.push(VinegarScope::new());
+    }
+
+    fn pop_scope(&mut self) -> Option<VinegarScope> {
+        self.lifetime_stack.pop()
+    }
+
+    fn last(&self) -> Option<&VinegarScope> {
+        self.lifetime_stack.last()
+    }
+}
+
+#[derive(Debug)]
+pub struct EvalResult {
+    value: VinegarObject,
+    return_: bool,
+}
+
 pub struct VinegarRuntime {
     string_literals: StringLiteralMap,
     string_hasher: DefaultHasher,
     global_scope: VinegarScope,
-    local_stack: Vec<VinegarScope>,
+    call_stack: Vec<VinegarScopeStack>,
     debug_info: DebugInfo,
 }
 impl VinegarRuntime {
@@ -567,7 +623,7 @@ impl VinegarRuntime {
             string_literals: parser_result.string_literals,
             string_hasher: parser_result.string_hasher,
             global_scope: VinegarScope::new(),
-            local_stack: vec![VinegarScope::new()],
+            call_stack: vec![VinegarScopeStack::new()],
             debug_info: match debug_info {
                 Some(d) => d,
                 None => DebugInfo::new(None, "(unknown source)".to_string()),
@@ -578,31 +634,50 @@ impl VinegarRuntime {
 
     fn interpret(&mut self, tree_root: CodeBody) -> Result<VinegarObject, Error> {
         self.import_library::<vinegar_std::StandardLibrary>();
-        self.interpret_code_body(&tree_root)
+        Ok(self.interpret_code_body(&tree_root)?.value)
     }
 
-    fn interpret_code_body(&mut self, code_body: &CodeBody) -> Result<VinegarObject, Error> {
+    fn interpret_code_body(&mut self, code_body: &CodeBody) -> Result<EvalResult, Error> {
+        self.call_stack.last_mut().unwrap().add_scope();
         let mut last_result = VinegarObject::None;
         for statement in &code_body.statements {
-            last_result = match statement {
-                Statement::Assignment(a) => {
-                    self.interpret_assignment(&a)?;
-                    VinegarObject::None
-                }
-                Statement::Expression(e) => self.interpret_expression(&e)?,
-                Statement::FunctionDefinition(f) => {
-                    self.interpret_function_definition(f)?;
-                    VinegarObject::None
-                }
-            };
+            let result = self.interpret_statement(statement)?;
+            if result.return_ {
+                return Ok(result);
+            }
+            last_result = result.value;
         }
-        Ok(last_result)
+        self.call_stack.last_mut().unwrap().pop_scope();
+        Ok(EvalResult {
+            value: last_result,
+            return_: false,
+        })
     }
 
-    fn interpret_assignment(&mut self, assignment: &Assignment) -> Result<(), Error> {
+    fn interpret_statement(&mut self, statement: &Statement) -> Result<EvalResult, Error> {
+        let value = match statement {
+            Statement::Assignment(a) => self.interpret_assignment(a)?,
+            Statement::Expression(e) => self.interpret_expression(e)?,
+            Statement::FunctionDefinition(f) => self.interpret_function_definition(f)?,
+            Statement::If(i) => return self.interpret_if(i),
+            Statement::Return(r) => {
+                return Ok(EvalResult {
+                    value: self.interpret_return(r)?,
+                    return_: true,
+                })
+            }
+        };
+
+        Ok(EvalResult {
+            value,
+            return_: false,
+        })
+    }
+
+    fn interpret_assignment(&mut self, assignment: &Assignment) -> Result<VinegarObject, Error> {
         let name = &assignment.name;
         let value: VinegarObject = self.interpret_expression(&assignment.value)?;
-        let local_scope = self.local_stack.last_mut().unwrap();
+        let local_scope = self.call_stack.last_mut().unwrap();
         match local_scope.get_mut(name) {
             Some(v) => {
                 *v = value;
@@ -611,16 +686,25 @@ impl VinegarRuntime {
                 local_scope.insert(name.clone(), value);
             }
         }
-        Ok(())
+        Ok(VinegarObject::None)
     }
 
     fn interpret_expression(&mut self, expression: &Expression) -> Result<VinegarObject, Error> {
         match expression {
-            Expression::UnaryOperator(un_op) => self.interpret_un_op(un_op),
-            Expression::BinaryOperator(bin_op) => self.interpret_bin_op(bin_op),
             Expression::Literal(l) => self.interpret_literal(l),
             Expression::Identifier(v) => self.interpret_variable(v),
+            Expression::UnaryOperator(un_op) => self.interpret_un_op(un_op),
+            Expression::BinaryOperator(bin_op) => self.interpret_bin_op(bin_op),
             Expression::FunctionCall(f) => self.interpret_function_call(f),
+        }
+    }
+
+    fn interpret_literal(&mut self, literal: &Literal) -> Result<VinegarObject, Error> {
+        match literal {
+            &Literal::Int(i, _) => Ok(VinegarObject::Int(i)),
+            &Literal::Float(f, _) => Ok(VinegarObject::Float(f)),
+            &Literal::String(s, _) => Ok(VinegarObject::String(s)),
+            &Literal::Bool(b, _) => Ok(VinegarObject::Bool(b)),
         }
     }
 
@@ -631,7 +715,7 @@ impl VinegarRuntime {
                     Some(value) => return Ok(value.clone()),
                     None => (),
                 };
-                match self.local_stack.last().unwrap().get(name) {
+                match self.call_stack.last().unwrap().get(name) {
                     Some(value) => return Ok(value.clone()),
                     None => (),
                 };
@@ -658,12 +742,18 @@ impl VinegarRuntime {
         }
     }
 
-    fn interpret_literal(&mut self, literal: &Literal) -> Result<VinegarObject, Error> {
-        match literal {
-            &Literal::Int(i, _) => Ok(VinegarObject::Int(i)),
-            &Literal::Float(f, _) => Ok(VinegarObject::Float(f)),
-            &Literal::String(s, _) => Ok(VinegarObject::String(s)),
-            &Literal::Bool(b, _) => Ok(VinegarObject::Bool(b)),
+    fn interpret_un_op(&mut self, op: &UnaryOperator) -> Result<VinegarObject, Error> {
+        let value = self.interpret_expression(&op.expr)?;
+        match op.op_type {
+            UnaryOperatorType::Minus => Ok(value
+                .invert()
+                .or_error(self.get_error_prefix(&op.get_char_range()))?),
+            UnaryOperatorType::Not => {
+                let value = self.interpret_expression(&op.expr)?;
+                Ok(value
+                    .not(&self.string_literals)
+                    .or_error(self.get_error_prefix(&op.get_char_range()))?)
+            }
         }
     }
 
@@ -696,28 +786,13 @@ impl VinegarRuntime {
         }
     }
 
-    fn interpret_un_op(&mut self, op: &UnaryOperator) -> Result<VinegarObject, Error> {
-        let value = self.interpret_expression(&op.expr)?;
-        match op.op_type {
-            UnaryOperatorType::Minus => Ok(value
-                .invert()
-                .or_error(self.get_error_prefix(&op.get_char_range()))?),
-            UnaryOperatorType::Not => {
-                let value = self.interpret_expression(&op.expr)?;
-                Ok(value
-                    .not(&self.string_literals)
-                    .or_error(self.get_error_prefix(&op.get_char_range()))?)
-            }
-        }
-    }
-
     fn interpret_function_call(&mut self, f: &FunctionCall) -> Result<VinegarObject, Error> {
         let func = self.interpret_expression(&f.expr)?;
         match &func {
             VinegarObject::Function(function) => {
                 let mut remaining_expected_args = function.args.clone();
                 let body = &function.body;
-                let mut function_scope = VinegarScope::new();
+                let mut function_scope = VinegarScopeStack::new();
 
                 for arg in &f.args {
                     let name_index = match &arg.debug_name {
@@ -779,37 +854,41 @@ impl VinegarRuntime {
                     }
                 }
 
-                self.local_stack.push(function_scope);
+                self.call_stack.push(function_scope);
 
                 let result = match body {
-                    FunctionBody::VinegarBody(b) => self.interpret_code_body(b),
-                    FunctionBody::RustWrapper(w) => {
-                        match w.run(
-                            &self.global_scope,
-                            &self.string_literals,
-                            self.local_stack.last().unwrap(),
-                        ) {
-                            Ok(result) => Ok(result),
-                            Err(err) => Err(Error::VinegarError(
-                                self.get_error_prefix(&f.expr.get_char_range()),
-                                err,
-                            )),
-                        }
-                    }
+                    FunctionBody::VinegarBody(b) => self.interpret_code_body(b)?.value,
+                    FunctionBody::RustWrapper(w) => match w.run(
+                        &self.global_scope,
+                        &self.string_literals,
+                        self.call_stack.last().unwrap().last().unwrap(),
+                    ) {
+                        Ok(result) => Ok(result),
+                        Err(err) => Err(Error::VinegarError(
+                            self.get_error_prefix(&f.expr.get_char_range()),
+                            err,
+                        )),
+                    }?,
                 };
-                self.local_stack.pop();
-                result
+                self.call_stack.pop();
+                Ok(result)
             }
             _ => {
                 return Err(Error::VinegarError(
                     self.get_error_prefix(&f.expr.get_char_range()),
-                    VinegarError::NotCallableError(f.expr.debug_string(&self.string_literals), func.type_name().into()),
+                    VinegarError::NotCallableError(
+                        f.expr.debug_string(&self.string_literals),
+                        func.type_name().into(),
+                    ),
                 ))
             }
         }
     }
 
-    fn interpret_function_definition(&mut self, func: &FunctionDefinition) -> Result<(), Error> {
+    fn interpret_function_definition(
+        &mut self,
+        func: &FunctionDefinition,
+    ) -> Result<VinegarObject, Error> {
         let name = &func.name;
         let mut args = vec![];
         for a in &func.args {
@@ -826,7 +905,7 @@ impl VinegarRuntime {
             args,
             FunctionBody::VinegarBody(func.body.clone()),
         ));
-        let local_scope = self.local_stack.last_mut().unwrap();
+        let local_scope = self.call_stack.last_mut().unwrap();
         match local_scope.get_mut(name) {
             Some(v) => {
                 *v = value;
@@ -835,7 +914,33 @@ impl VinegarRuntime {
                 local_scope.insert(name.clone(), value);
             }
         }
-        Ok(())
+        Ok(VinegarObject::None)
+    }
+
+    fn interpret_if(&mut self, if_: &If) -> Result<EvalResult, Error> {
+        let condition = self
+            .interpret_expression(&if_.condition)?
+            .as_bool(&self.string_literals)
+            .or_error(self.get_error_prefix(&if_.condition.get_char_range()))?;
+        if condition {
+            self.interpret_code_body(&if_.if_body)
+        } else {
+            match &if_.else_body {
+                Some(ElseBody::If(i)) => self.interpret_if(i.as_ref()),
+                Some(ElseBody::CodeBody(b)) => self.interpret_code_body(&b),
+                None => Ok(EvalResult {
+                    value: VinegarObject::None,
+                    return_: false,
+                }),
+            }
+        }
+    }
+
+    fn interpret_return(&mut self, return_: &Return) -> Result<VinegarObject, Error> {
+        match &return_.value {
+            Some(v) => Ok(self.interpret_expression(v)?),
+            None => Ok(VinegarObject::None),
+        }
     }
 
     fn import_library<T>(&mut self)
