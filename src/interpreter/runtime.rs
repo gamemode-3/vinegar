@@ -426,7 +426,7 @@ impl VinegarObject {
             VinegarObject::RustStructWrapper(w) => {
                 format!(
                     "<RustStructWrapper {{ object: {} }}>",
-                    w.object.lock().unwrap().to_string(string_literals)?
+                    w.object.lock().unwrap().format_string(string_literals)?
                 )
             }
         })
@@ -478,7 +478,7 @@ pub trait RustStructInterface: std::fmt::Debug {
         string_literals: &StringLiteralMap,
     ) -> Result<(), VinegarError>;
 
-    fn to_string(&self, string_literals: &StringLiteralMap) -> Result<String, VinegarError>;
+    fn format_string(&self, string_literals: &StringLiteralMap) -> Result<String, VinegarError>;
 
     fn write_debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
 }
