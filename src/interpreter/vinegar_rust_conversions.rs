@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     debug::VinegarError,
-    runtime::{Function, VinegarObject, VinegarObjectConversion},
+    runtime::{Function, RustStructInterface, VinegarObject, VinegarObjectConversion, wrapper_into},
     string_literal_map::StringLiteralMap,
 };
 
@@ -141,3 +141,4 @@ impl From<&VinegarObject> for f64 {
         }
     }
 }
+

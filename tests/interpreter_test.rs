@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use vinegar::interpreter::runtime::VinegarRuntime;
+    use vinegar::interpreter::runtime::{try_from_vinegar_object, VinegarRuntime, VinegarObject};
+    use vinegar::interpreter::vinegar_std::Duck;
 
     #[test]
     fn test_on_file() {
@@ -8,10 +9,17 @@ mod tests {
 
         println!("\n\n");
 
-        match VinegarRuntime::interpret_file(path.into()) {
-            Ok(_) => (),
-            Err(e) => println!("{}", e),
+        let obj = match VinegarRuntime::interpret_file(path.into()) {
+            Ok(v) => v,
+            Err(e) => return println!("{}", e),
         };
+
+        let a: Duck = match try_from_vinegar_object(obj) {
+            Some(v) => v,
+            None => return println!("Could not convert object to struct"),
+        };
+
+        println!("{:?}", a);
 
         println!("\n\n");
     }

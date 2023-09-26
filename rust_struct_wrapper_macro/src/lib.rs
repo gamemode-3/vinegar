@@ -152,6 +152,11 @@ pub fn vinegar_rust_struct_interface_derive(input: TokenStream) -> TokenStream {
             #format_string_impl
             #write_debug_impl
         }
+        unsafe impl AsAny for #struct_name {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
     };
 
     TokenStream::from(expanded)

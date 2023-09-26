@@ -2,7 +2,7 @@ use super::{
     debug::VinegarError,
     runtime::{
         Function, FunctionArg, FunctionBody, Library, RustFunctionWrapper, RustStructInterface,
-        VinegarConstructor, VinegarObject, VinegarObjectConversion, VinegarScope,
+        VinegarConstructor, VinegarObject, VinegarObjectConversion, VinegarScope, AsAny,
     },
     string_literal_map::{MapStringLiterals, StringLiteralMap},
 };
@@ -26,7 +26,7 @@ fn vinegar_print(
 }
 
 #[derive(Debug, VinegarRustStructInterface, VinegarConstructor)]
-struct Duck {
+pub struct Duck {
     name: String,
     height_in_cm: usize,
     quack_volume: f64,

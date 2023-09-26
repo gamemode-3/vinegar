@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::cmp::Ordering;
 use std::sync::{Arc, Mutex};
 use std::{
@@ -463,7 +464,7 @@ impl VinegarObject {
     }
 }
 
-pub trait RustStructInterface: std::fmt::Debug {
+pub trait RustStructInterface: std::fmt::Debug + AsAny {
     fn get_attribute(
         &self,
         name: &String,
@@ -503,6 +504,41 @@ impl std::fmt::Debug for RustStructWrapper {
         let locked_data = self.object.lock().unwrap();
 
         locked_data.write_debug(f)
+    }
+}
+pub unsafe trait AsAny {
+    /// SAFETY: has to return self as it's used for type casting
+    fn as_any(&self) -> &dyn Any;
+}
+
+pub fn downcast_struct_interface<T: RustStructInterface + 'static>(
+    object: Arc<Mutex<dyn RustStructInterface>>,
+) -> Option<Arc<Mutex<T>>> {
+    if object.lock().unwrap().as_any().is::<T>() {
+        let raw: *const Mutex<dyn RustStructInterface> = Arc::into_raw(object.clone());
+        let raw: *const Mutex<T> = raw.cast();
+
+        // SAFETY: This is safe because the pointer orignally came from an Arc
+        // with the same size and alignment since we've checked (via Any) that
+        // the object within is the type being casted to.
+        Some(unsafe { Arc::from_raw(raw) })
+    } else {
+        None
+    }
+}
+
+pub fn wrapper_into<T: RustStructInterface + 'static>(wrapper: RustStructWrapper) -> T {
+    let specific_arc = downcast_struct_interface::<T>(wrapper.object).unwrap();
+    Arc::into_inner(specific_arc).unwrap().into_inner().unwrap()
+}
+
+pub fn try_from_vinegar_object<T>(vinegar_object: VinegarObject) -> Option<T>
+where
+    T: RustStructInterface + 'static,
+{
+    match vinegar_object {
+        VinegarObject::RustStructWrapper(w) => Some(wrapper_into(w)),
+        _ => None,
     }
 }
 
@@ -858,19 +894,16 @@ impl VinegarRuntime {
 
                 let result = match body {
                     FunctionBody::VinegarBody(b) => self.interpret_code_body(b)?.value,
-                    FunctionBody::RustWrapper(w) => match w.run(
-                        &self.global_scope,
-                        &self.string_literals,
-                        self.call_stack.last().unwrap().last().unwrap(),
-                    ) {
-                        Ok(result) => Ok(result),
-                        Err(err) => Err(Error::VinegarError(
-                            self.get_error_prefix(&f.expr.get_char_range()),
-                            err,
-                        )),
-                    }?,
+                    FunctionBody::RustWrapper(w) => w
+                        .run(
+                            &self.global_scope,
+                            &self.string_literals,
+                            self.call_stack.last().unwrap().last().unwrap(),
+                        )
+                        .or_error(self.get_error_prefix(&f.expr.get_char_range()))?,
                 };
                 self.call_stack.pop();
+
                 Ok(result)
             }
             _ => {
